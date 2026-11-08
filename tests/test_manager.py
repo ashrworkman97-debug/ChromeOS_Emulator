@@ -1,9 +1,13 @@
 import os
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
 
-from chromeos_vm.manager import VMConfig, VMError, VMManager, bochs_quote, validate_name, validate_resources
+from chromeos_vm.manager import (
+    VMConfig, VMError, VMManager, bochs_quote, disk_geometry,
+    validate_name, validate_resources,
+)
 
 
 class ValidationTests(unittest.TestCase):
@@ -30,6 +34,14 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(VMError):
             bochs_quote('bad"\nreset: 1')
 
+    def test_geometry_is_exact_and_positive(self):
+        for size in (1, 2, 8, 32, 512):
+            cylinders, heads, sectors, byte_count = disk_geometry(size)
+            self.assertGreater(cylinders, 0)
+            self.assertEqual(byte_count, cylinders * heads * sectors * 512)
+            self.assertLessEqual(byte_count, size * 1024**3)
+            self.assertLess(size * 1024**3 - byte_count, heads * sectors * 512)
+
 
 class ManagerTests(unittest.TestCase):
     def setUp(self):
@@ -41,9 +53,13 @@ class ManagerTests(unittest.TestCase):
     def test_create_sparse_disk_and_bochsrc(self):
         cfg = self.manager.create("retro-pc", 512, 1, 10_000_000)
         disk = Path(cfg.disk_path)
-        self.assertEqual(disk.stat().st_size, 1024**3)
+        cylinders, heads, sectors, expected_bytes = disk_geometry(1)
+        self.assertEqual(disk.stat().st_size, expected_bytes)
+        self.assertEqual(disk.stat().st_size, cylinders * heads * sectors * 512)
         config = (self.manager.vm_path(cfg.name) / "bochsrc").read_text()
         self.assertIn("megs: 512", config)
+        self.assertIn("display_library: sdl2", config)
+        self.assertIn(f"cylinders={cylinders}, heads={heads}, spt={sectors}", config)
         self.assertIn("ata0-master: type=disk", config)
         self.assertIn("boot: disk", config)
         self.assertNotIn("qemu", config.lower())
@@ -79,11 +95,20 @@ class ManagerTests(unittest.TestCase):
     def test_mock_bochs_start_and_stop(self):
         self.manager.create("launch-test")
         fake = self.root / "fake-bochs"
-        fake.write_text("#!/bin/sh\nexec /bin/sleep 30\n")
+        args_file = self.root / "bochs-args.txt"
+        fake.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' \"$@\" > " + shlex.quote(str(args_file)) + "\n"
+            "exec /bin/sleep 30\n"
+        )
         fake.chmod(0o755)
         pid = self.manager.start("launch-test", str(fake))
         self.assertGreater(pid, 0)
         self.assertTrue(self.manager.is_running("launch-test"))
+        self.assertEqual(
+            args_file.read_text().splitlines(),
+            ["-q", "-f", str(self.manager.vm_path("launch-test") / "bochsrc")],
+        )
         self.manager.stop("launch-test")
         self.assertFalse(self.manager.is_running("launch-test"))
 
