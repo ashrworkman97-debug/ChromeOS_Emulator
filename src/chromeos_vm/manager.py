@@ -206,12 +206,10 @@ class VMManager:
         ]
         bios = self._find_bios("BIOS-bochs-latest")
         vgabios = self._find_bios("VGABIOS-lgpl-latest")
-        if not bios:
-            raise VMError("Bochs system BIOS was not found. Install it with: sudo apt install bochsbios")
-        if not vgabios:
-            raise VMError("Bochs VGA BIOS was not found. Install it with: sudo apt install vgabios (or seabios)")
-        lines.append(f"romimage: file={bochs_quote(bios)}")
-        lines.append(f"vgaromimage: file={bochs_quote(vgabios)}")
+        if bios:
+            lines.append(f"romimage: file={bochs_quote(bios)}")
+        if vgabios:
+            lines.append(f"vgaromimage: file={bochs_quote(vgabios)}")
         lines.extend([
             "display_library: sdl2",
             "vga: extension=vbe",
@@ -284,6 +282,10 @@ class VMManager:
         executable = self.find_bochs(bochs_override)
         if not executable:
             raise VMError("Bochs was not found. Install it with: sudo apt install bochs bochs-sdl")
+        if not self._find_bios("BIOS-bochs-latest"):
+            raise VMError("Bochs system BIOS was not found. Install it with: sudo apt install bochsbios")
+        if not self._find_bios("VGABIOS-lgpl-latest"):
+            raise VMError("Bochs VGA BIOS was not found. Install it with: sudo apt install vgabios (or seabios)")
         if not cfg.disk_path or not Path(cfg.disk_path).is_file():
             raise VMError("The VM's virtual disk is missing.")
         config_file = self.write_bochsrc(cfg)
