@@ -201,7 +201,6 @@ class VMManager:
         cylinders, heads, sectors, _image_bytes = disk_geometry(cfg.disk_gib)
         lines.append('ata0-master: type=disk, mode=flat, path=' + bochs_quote(cfg.disk_path) +
                      f", cylinders={cylinders}, heads={heads}, spt={sectors}, translation=auto")
-        ])
         if cfg.iso_path:
             lines.append('ata0-slave: type=cdrom, path=' + bochs_quote(cfg.iso_path) + ", status=inserted")
             lines.append("boot: cdrom, disk")
