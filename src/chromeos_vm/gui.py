@@ -85,7 +85,7 @@ class ChromeOSVMStudio:
             self.status.set(result.message)
             if messagebox.askyesno(
                 "Update installed",
-                result.message + "\\n\\nRestart the manager now? Any running guest remains a separate Bochs process; close guests safely first.",
+                result.message + "\n\nRestart the manager now? Any running guest remains a separate Bochs process; close guests safely first.",
                 parent=self.root,
             ):
                 self.root.destroy()
