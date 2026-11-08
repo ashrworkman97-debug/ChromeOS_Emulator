@@ -65,7 +65,7 @@ def _write_metadata(value: dict[str, Any]) -> None:
     path = metadata_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(value, indent=2) + "\\n", encoding="utf-8")
+    temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
 
 
@@ -138,8 +138,12 @@ def _safe_extract(archive_bytes: bytes, destination: Path) -> Path:
             source = archive.extractfile(member)
             if source is None:
                 raise UpdateError("Could not read a file from the update archive.")
-            with source, target.open("xb") as output:
-                shutil.copyfileobj(source, output)
+            with source:
+                data = source.read(member.size + 1)
+            if len(data) != member.size:
+                raise UpdateError("An update archive entry did not match its declared size.")
+            with target.open("xb") as output:
+                output.write(data)
             target.chmod(0o644)
 
     if not (destination / "pyproject.toml").is_file() or not (destination / "src/chromeos_vm").is_dir():
