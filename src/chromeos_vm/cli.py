@@ -43,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "check":
             bochs = manager.find_bochs()
+            print(f"Application version: {__version__}")
+            print(f"Application code: {Path(__file__).resolve()}")
             print(f"Host: {sys.platform}")
             print(f"Bochs: {bochs or 'not installed'}")
             system_bios = manager._find_bios("BIOS-bochs-latest")
