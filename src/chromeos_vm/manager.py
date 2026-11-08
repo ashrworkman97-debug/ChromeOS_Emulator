@@ -169,6 +169,23 @@ class VMManager:
         self._save(updated)
         return updated
 
+    def update_profile(self, name: str, memory_mib: int, cpu_ips: int,
+                       iso: Path | str | None) -> VMConfig:
+        """Update editable profile fields for a stopped VM; never resize its disk."""
+        cfg = self.load(name)
+        if self.is_running(name):
+            raise VMError("Stop the VM before editing its settings or ejecting its ISO.")
+        validate_resources(memory_mib, cfg.disk_gib, cpu_ips)
+        iso_value = self._validate_iso(iso) if iso else None
+        updated = VMConfig(**{
+            **asdict(cfg),
+            "memory_mib": memory_mib,
+            "cpu_ips": cpu_ips,
+            "iso_path": iso_value,
+        })
+        self._save(updated)
+        return updated
+
     @staticmethod
     def _find_bios(filename: str) -> Path | None:
         """Find an installed ROM using Debian's owning package and real paths.
