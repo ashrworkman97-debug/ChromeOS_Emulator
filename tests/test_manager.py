@@ -69,17 +69,23 @@ class ManagerTests(unittest.TestCase):
         self.assertIn("boot: disk", config)
         self.assertNotIn("qemu", config.lower())
 
-    def test_finds_debian_trixie_vga_rom_name_without_bin_suffix(self):
-        rom = self.root / "VGABIOS-lgpl-latest"
+    def test_finds_debian_trixie_vga_rom_from_vgabios_package_manifest(self):
+        # Debian 13's vgabios package file list names this exact path.
+        rom = self.root / "usr/share/vgabios/vgabios.bin"
+        rom.parent.mkdir(parents=True)
         rom.write_bytes(b"mock VGA BIOS")
         completed = type("Result", (), {
-            "stdout": str(rom) + "\n",
+            "stdout": str(rom) + "\\n",
             "stderr": "",
-            "returncode": 1,
+            "returncode": 0,
         })()
         with patch("chromeos_vm.manager.shutil.which", return_value="/usr/bin/dpkg-query"):
-            with patch("chromeos_vm.manager.subprocess.run", return_value=completed):
+            with patch("chromeos_vm.manager.subprocess.run", return_value=completed) as run:
                 found = self.manager._find_bios("VGABIOS-lgpl-latest")
+        run.assert_called_once_with(
+            ["dpkg-query", "-L", "vgabios"],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
         self.assertEqual(found, rom.resolve())
 
     def test_generated_config_uses_detected_rom_paths(self):
@@ -154,7 +160,11 @@ class ManagerTests(unittest.TestCase):
         self.assertTrue(self.manager.is_running("launch-test"))
         self.assertEqual(
             args_file.read_text().splitlines(),
-            ["-q", "-f", str(self.manager.vm_path("launch-test") / "bochsrc")],
+            [
+                "-q", "-f", str(self.manager.vm_path("launch-test") / "bochsrc"),
+                'romimage: file="/mock/bochs-bios"',
+                'vgaromimage: file="/mock/vga-bios"',
+            ],
         )
         self.manager.stop("launch-test")
         self.assertFalse(self.manager.is_running("launch-test"))
