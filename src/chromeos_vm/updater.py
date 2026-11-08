@@ -204,7 +204,7 @@ def check_for_updates(*, force: bool = False, cooldown_hours: int = 12) -> Updat
         _write_metadata({"repository": f"{OWNER}/{REPOSITORY}", "branch": BRANCH,
                          "commit": sha, "last_check": now.isoformat()})
         return UpdateResult("updated", "A new version was installed. Restart ChromeOS VM Studio to use it.", sha)
-    except UpdateError as exc:
+    except (UpdateError, OSError) as exc:
         return UpdateResult("failed", str(exc), metadata.get("commit"))
 
 
