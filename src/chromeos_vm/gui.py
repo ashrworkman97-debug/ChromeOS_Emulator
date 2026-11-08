@@ -69,14 +69,24 @@ class ChromeOSVMStudio:
         self.root.after(1200, self._poll)
 
     def check_updates(self, manual: bool = True) -> None:
+        if getattr(self, "_update_check_active", False):
+            return
+        self._update_check_active = True
         self.status.set("Checking GitHub for ChromeOS VM Studio updates…")
 
         def worker() -> None:
-            result = check_for_updates(force=manual)
             try:
-                self.root.after(0, lambda: self._show_update_result(result, manual))
+                result = check_for_updates(force=manual)
+            except Exception as exc:
+                result = UpdateResult("failed", str(exc))
+            try:
+                self.root.after(0, lambda: self._finish_update_check(result, manual))
             except tk.TclError:
                 pass  # The user closed the window while the check was running.
+
+    def _finish_update_check(self, result: UpdateResult, manual: bool) -> None:
+        self._update_check_active = False
+        self._show_update_result(result, manual)
 
         threading.Thread(target=worker, name="vm-studio-updater", daemon=True).start()
 
