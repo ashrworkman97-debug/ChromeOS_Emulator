@@ -20,7 +20,7 @@ python3 -m venv --system-site-packages "$APP_DIR/venv"
 
 # Record the source revision so the built-in updater knows which commit is installed.
 COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || true)"
-printf '{"repository":"ashrworkman97-debug/ChromeOS_Emulator","branch":"main","commit":"%s"}\\n' "$COMMIT" > "$APP_DIR/install.json"
+printf '{"repository":"ashrworkman97-debug/ChromeOS_Emulator","branch":"main","commit":"%s"}\n' "$COMMIT" > "$APP_DIR/install.json"
 
 cat > "$DESKTOP_DIR/chromeos-vm-studio.desktop" <<EOF
 [Desktop Entry]
