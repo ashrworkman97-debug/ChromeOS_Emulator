@@ -6,7 +6,7 @@
 | App UI | Native Linux GUI app (Tkinter); no browser UI |
 | Emulator | Bochs full-PC x86 software emulation |
 | QEMU | Not used |
-| KVM | Not required for Bochs |
+| KVM | Not required for Bochs |\n| Updates | Background commit-based updater from this repository's `main` branch |
 | Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
 | Guest display | Bochs's own GUI window |
 
@@ -25,3 +25,8 @@ Software instruction emulation is expensive. Start with modest guest RAM and old
 ## Required user inputs
 
 The app creates an empty virtual hard disk. The user supplies legally obtained guest installation ISO/disk images. Firmware ROM availability depends on the distro's Bochs/BIOS packages; the project does not package proprietary ROM dumps.
+
+
+## BIOS packages
+
+On Debian-based Crostini, install `bochsbios` and `vgabios` (the latter may alternatively be provided by `seabios`). Debian Trixie's Bochs package depends on the VGA BIOS package, while the Bochs system BIOS is supplied separately by `bochsbios`. The app resolves the installed ROM paths and refuses to launch if it cannot find both files, with a package-install hint. It does not bundle ROM files.
