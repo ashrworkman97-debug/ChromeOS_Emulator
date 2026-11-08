@@ -3,6 +3,7 @@ import shlex
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from chromeos_vm.manager import (
@@ -103,7 +104,10 @@ class ManagerTests(unittest.TestCase):
             "exec /bin/sleep 30\n"
         )
         fake.chmod(0o755)
-        pid = self.manager.start("launch-test", str(fake))
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/bochs-bios"), Path("/mock/vga-bios"),
+                                       Path("/mock/bochs-bios"), Path("/mock/vga-bios")]):
+            pid = self.manager.start("launch-test", str(fake))
         self.assertGreater(pid, 0)
         deadline = time.monotonic() + 2
         while not args_file.exists() and time.monotonic() < deadline:
