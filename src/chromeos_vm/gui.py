@@ -16,8 +16,8 @@ class ChromeOSVMStudio:
         self.root = root
         self.manager = manager or VMManager()
         root.title("ChromeOS VM Studio")
-        root.geometry("820x500")
-        root.minsize(640, 380)
+        root.geometry("980x620")
+        root.minsize(780, 520)
         self._build()
         self.refresh()
         # Check for updates off the UI thread; the updater throttles automatic
@@ -227,10 +227,12 @@ class ChromeOSVMStudio:
         self.table.delete(*self.table.get_children())
         try:
             for cfg in self.manager.list_vms():
-                state = "Running" if self.manager.is_running(cfg.name) else "Stopped"
+                running = self.manager.is_running(cfg.name)
+                state = "Running" if running else "Stopped"
                 media = Path(cfg.iso_path).name if cfg.iso_path else "None"
                 self.table.insert("", "end", iid=cfg.name, text=cfg.name,
-                                  values=(state, f"{cfg.memory_mib} MiB", f"{cfg.disk_gib} GiB", media))
+                                  values=(state, f"{cfg.memory_mib} MiB", f"{cfg.disk_gib} GiB", media),
+                                  tags=("running" if running else "stopped",))
             if selected and self.table.exists(selected):
                 self.table.selection_set(selected)
         except VMError as exc:
