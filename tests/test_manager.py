@@ -75,7 +75,7 @@ class ManagerTests(unittest.TestCase):
         rom.parent.mkdir(parents=True)
         rom.write_bytes(b"mock VGA BIOS")
         completed = type("Result", (), {
-            "stdout": str(rom) + "\\n",
+            "stdout": str(rom) + chr(10),
             "stderr": "",
             "returncode": 0,
         })()
