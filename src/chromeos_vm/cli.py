@@ -14,6 +14,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"ChromeOS VM Studio {__version__}")
     cmds = parser.add_subparsers(dest="command", required=True)
     cmds.add_parser("check", help="check Crostini and Bochs readiness")
+    update = cmds.add_parser("update", help="check for and install app updates")
+    update.add_argument("--force", action="store_true", help="ignore the automatic update-check cooldown")
     create = cmds.add_parser("create", help="create a VM profile and sparse raw disk")
     create.add_argument("name")
     create.add_argument("--memory-mib", type=int, default=512)
@@ -32,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "update":
+        from .updater import check_for_updates
+        result = check_for_updates(force=args.force)
+        print(result.message)
+        return 0 if result.status in {"current", "updated"} else 1
     manager = VMManager(args.home)
     try:
         if args.command == "check":
