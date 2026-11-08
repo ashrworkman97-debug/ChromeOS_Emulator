@@ -73,7 +73,7 @@ class ManagerTests(unittest.TestCase):
         rom = self.root / "VGABIOS-lgpl-latest"
         rom.write_bytes(b"mock VGA BIOS")
         completed = type("Result", (), {
-            "stdout": str(rom) + "\\n",
+            "stdout": str(rom) + "\n",
             "stderr": "",
             "returncode": 1,
         })()
@@ -98,7 +98,7 @@ class ManagerTests(unittest.TestCase):
         fake.chmod(0o755)
         with patch.object(self.manager, "_find_bios",
                           side_effect=[Path("/mock/BIOS-bochs-latest"), None]):
-            with self.assertRaisesRegex(VMError, "sudo apt install vgabios"):
+            with self.assertRaisesRegex(VMError, "apt install -y vgabios"):
                 self.manager.start("missing-rom-test", str(fake))
 
     def test_iso_attach(self):
