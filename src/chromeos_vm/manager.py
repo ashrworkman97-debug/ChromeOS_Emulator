@@ -171,12 +171,19 @@ class VMManager:
 
     @staticmethod
     def _find_bios(filename: str) -> Path | None:
-        roots = []
+        # Debian Trixie's Bochs sample config uses this VGA BIOS path. Keep
+        # BXSHARE and older package symlinks as fallbacks for other distros.
+        candidates = []
+        if filename == "VGABIOS-lgpl-latest":
+            candidates.append(Path("/usr/share/vgabios/vgabios.bin"))
         if os.environ.get("BXSHARE"):
-            roots.append(Path(os.environ["BXSHARE"]))
-        roots.extend([Path("/usr/share/bochs"), Path("/usr/share/bochsbios")])
-        for root in roots:
-            candidate = root / filename
+            candidates.append(Path(os.environ["BXSHARE"]) / filename)
+        candidates.extend([
+            Path("/usr/share/bochs") / filename,
+            Path("/usr/share/bochs") / (filename + ".bin"),
+            Path("/usr/share/bochsbios") / filename,
+        ])
+        for candidate in candidates:
             if candidate.is_file():
                 return candidate
         return None
