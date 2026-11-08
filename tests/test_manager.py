@@ -120,6 +120,22 @@ class ManagerTests(unittest.TestCase):
         self.assertIn("type=cdrom", config)
         self.assertIn("boot: cdrom, disk", config)
 
+    def test_update_profile_can_eject_iso_and_change_resources(self):
+        iso = self.root / "install.iso"
+        iso.write_bytes(b"test image")
+        cfg = self.manager.create("editable", iso=iso)
+        updated = self.manager.update_profile(cfg.name, 768, 12_000_000, None)
+        self.assertEqual(updated.memory_mib, 768)
+        self.assertEqual(updated.cpu_ips, 12_000_000)
+        self.assertIsNone(updated.iso_path)
+        self.assertTrue(Path(updated.disk_path).is_file())
+
+    def test_update_profile_rejects_running_vm(self):
+        cfg = self.manager.create("editing-running")
+        (self.manager.vm_path(cfg.name) / "runtime/bochs.pid").write_text(str(os.getpid()))
+        with self.assertRaisesRegex(VMError, "Stop the VM"):
+            self.manager.update_profile(cfg.name, 512, 10_000_000, None)
+
     def test_missing_iso_rejected(self):
         with self.assertRaises(VMError):
             self.manager.create("bad-iso", iso=self.root / "missing.iso")
