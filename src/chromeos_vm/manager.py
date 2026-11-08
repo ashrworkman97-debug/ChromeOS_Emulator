@@ -171,36 +171,35 @@ class VMManager:
 
     @staticmethod
     def _find_bios(filename: str) -> Path | None:
-        """Resolve ROMs from installed Debian package manifests and known paths.
+        """Find an installed ROM using Debian's owning package and real paths.
 
-        Debian Trixie ships the Bochs VGA ROM at
-        /usr/share/bochs/VGABIOS-lgpl-latest (without the upstream .bin suffix).
-        Other distributions may ship the .bin name or place ROMs in BXSHARE.
+        Debian Trixie's vgabios package installs /usr/share/vgabios/vgabios.bin;
+        it does not install Bochs' upstream $BXSHARE/VGABIOS-lgpl-latest.bin.
         """
         if filename == "BIOS-bochs-latest":
-            names = ("BIOS-bochs-latest", "BIOS-bochs-legacy", "bios.bin")
-            matches = lambda p: p.name in names
+            package = "bochsbios"
+            names = ("BIOS-bochs-latest", "BIOS-bochs-legacy")
         else:
+            package = "vgabios"
             names = (
-                "VGABIOS-lgpl-latest", "VGABIOS-lgpl-latest.bin",
-                "vgabios.bin", "vgabios-stdvga.bin",
-                "vgabios-bochs-display.bin", "VGABIOS-elpin-2.40",
-            )
-            matches = lambda p: p.name in names or (
-                p.name.startswith("VGABIOS-") and p.is_file()
+                "vgabios.bin", "vgabios-stdvga.bin", "vgabios.stdvga.bin",
+                "VGABIOS-lgpl-latest.bin", "VGABIOS-lgpl-latest",
+                "VGABIOS-elpin-2.40",
             )
 
-        # Prefer paths recorded by dpkg. This is more reliable than assuming
-        # the ROM filename matches Bochs' compiled-in default.
+        # Query the package that owns this ROM, rather than mixing unrelated
+        # and possibly absent packages in one dpkg-query invocation.
         package_paths: list[Path] = []
         if shutil.which("dpkg-query"):
             try:
                 result = subprocess.run(
-                    ["dpkg-query", "-L", "bochs", "bochsbios", "vgabios", "seabios"],
+                    ["dpkg-query", "-L", package],
                     capture_output=True, text=True, check=False, timeout=10,
                 )
-                package_paths.extend(Path(line.strip()) for line in result.stdout.splitlines()
-                                     if line.strip().startswith("/"))
+                package_paths.extend(
+                    Path(line.strip()) for line in result.stdout.splitlines()
+                    if line.strip().startswith("/")
+                )
             except (OSError, subprocess.TimeoutExpired):
                 pass
 
@@ -209,13 +208,16 @@ class VMManager:
         if env_root:
             roots.append(env_root)
         roots.extend([
+            Path("/usr/share/vgabios"),
             Path("/usr/share/bochs"),
             Path("/usr/share/bochsbios"),
-            Path("/usr/share/vgabios"),
             Path("/usr/share/seabios"),
             Path("/usr/local/share/bochs"),
         ])
-        candidates = [path for path in package_paths if matches(path)]
+
+        # Prefer the package manifest's exact files; then inspect known
+        # installation roots. Never return a guessed, non-existent ROM path.
+        candidates = [path for path in package_paths if path.name in names]
         candidates.extend(root / name for root in roots for name in names)
         for candidate in candidates:
             try:
