@@ -52,6 +52,23 @@ def bochs_quote(value: str | Path) -> str:
     return '"' + value.replace("\\", "\\\\") + '"'
 
 
+def disk_geometry(disk_gib: int) -> tuple[int, int, int, int]:
+    """Return BIOS-friendly CHS geometry and its exact flat-image byte size.
+
+    Bochs requires the configured C*H*S*512 geometry to match a flat image's
+    byte length. Use 16 heads and 63 sectors/track, rounding down by < one
+    cylinder (about 504 KiB) so the virtual disk is always internally valid.
+    """
+    if type(disk_gib) is not int or disk_gib < MIN_DISK_GIB:
+        raise VMError("Disk size must be a positive whole number of GiB.")
+    heads, sectors = 16, 63
+    cylinder_bytes = heads * sectors * 512
+    cylinders = (disk_gib * 1024**3) // cylinder_bytes
+    if cylinders < 1:
+        raise VMError("Disk size is too small for the selected geometry.")
+    return cylinders, heads, sectors, cylinders * cylinder_bytes
+
+
 @dataclass(frozen=True)
 class VMConfig:
     name: str
@@ -121,8 +138,9 @@ class VMManager:
         directory.mkdir(parents=True)
         try:
             disk = directory / "disk.raw"
+            _cylinders, _heads, _sectors, image_bytes = disk_geometry(disk_gib)
             with disk.open("xb") as stream:
-                stream.truncate(disk_gib * 1024**3)
+                stream.truncate(image_bytes)
             config = VMConfig(name=name, memory_mib=memory_mib, disk_gib=disk_gib,
                               disk_path=str(disk.resolve()), iso_path=iso_value, cpu_ips=cpu_ips)
             self._save(config)
@@ -176,9 +194,13 @@ class VMManager:
         if vgabios:
             lines.append(f"vgaromimage: file={bochs_quote(vgabios)}")
         lines.extend([
+            "display_library: sdl2",
             "vga: extension=vbe",
             "mouse: enabled=1",
-            'ata0-master: type=disk, mode=flat, path=' + bochs_quote(cfg.disk_path) + ", cylinders=0",
+        ])
+        cylinders, heads, sectors, _image_bytes = disk_geometry(cfg.disk_gib)
+        lines.append('ata0-master: type=disk, mode=flat, path=' + bochs_quote(cfg.disk_path) +
+                     f", cylinders={cylinders}, heads={heads}, spt={sectors}, translation=auto")
         ])
         if cfg.iso_path:
             lines.append('ata0-slave: type=cdrom, path=' + bochs_quote(cfg.iso_path) + ", status=inserted")
@@ -250,7 +272,7 @@ class VMManager:
         log = self.vm_path(name) / "logs/launcher.log"
         try:
             with log.open("ab") as output:
-                proc = subprocess.Popen([executable, "-qf", str(config_file)],
+                proc = subprocess.Popen([executable, "-q", "-f", str(config_file)],
                                          cwd=self.vm_path(name), stdin=subprocess.DEVNULL,
                                          stdout=output, stderr=subprocess.STDOUT,
                                          start_new_session=True, close_fds=True)
