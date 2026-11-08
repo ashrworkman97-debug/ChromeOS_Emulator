@@ -76,6 +76,17 @@ class ManagerTests(unittest.TestCase):
         with self.assertRaises(VMError):
             self.manager.delete(cfg.name)
 
+    def test_mock_bochs_start_and_stop(self):
+        self.manager.create("launch-test")
+        fake = self.root / "fake-bochs"
+        fake.write_text("#!/bin/sh\\nexec /bin/sleep 30\\n")
+        fake.chmod(0o755)
+        pid = self.manager.start("launch-test", str(fake))
+        self.assertGreater(pid, 0)
+        self.assertTrue(self.manager.is_running("launch-test"))
+        self.manager.stop("launch-test")
+        self.assertFalse(self.manager.is_running("launch-test"))
+
 
 if __name__ == "__main__":
     unittest.main()
