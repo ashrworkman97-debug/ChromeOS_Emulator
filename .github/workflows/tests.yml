@@ -16,3 +16,39 @@ jobs:
       - run: python -m pip install --no-deps .
       - run: python -m compileall -q src tests
       - run: python -m unittest discover -s tests -v
+
+  bochs-rom-package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install real Bochs and ROM packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bochs bochs-sdl bochsbios vgabios
+      - name: Verify package-discovered ROMs and generated configuration
+        run: |
+          python -m pip install --no-deps --no-build-isolation .
+          python - <<'PY'
+          import tempfile
+          from pathlib import Path
+          from chromeos_vm.manager import VMManager
+
+          with tempfile.TemporaryDirectory() as temp:
+              manager = VMManager(Path(temp) / "vms")
+              system_bios = manager._find_bios("BIOS-bochs-latest")
+              vga_bios = manager._find_bios("VGABIOS-lgpl-latest")
+              assert system_bios and system_bios.is_file(), system_bios
+              assert vga_bios and vga_bios.is_file(), vga_bios
+              vm = manager.create("rom-smoke", memory_mib=128, disk_gib=1)
+              config = manager.render_bochsrc(vm)
+              assert f'romimage: file="{system_bios}"' in config
+              assert f'vgaromimage: file="{vga_bios}"' in config
+              assert "/usr/share/vgabios/vgabios.bin" in str(vga_bios) or vga_bios.name in {
+                  "VGABIOS-lgpl-latest.bin", "VGABIOS-lgpl-latest"
+              }
+              print(f"System BIOS: {system_bios}")
+              print(f"VGA BIOS: {vga_bios}")
+          PY
