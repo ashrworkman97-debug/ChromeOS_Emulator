@@ -17,7 +17,9 @@ sudo apt-get install -y bochs bochs-sdl bochsbios vgabios python3-tk python3-ven
 
 mkdir -p "$APP_DIR" "$DESKTOP_DIR" "$BIN_DIR"
 python3 -m venv --system-site-packages "$APP_DIR/venv"
-"$APP_DIR/venv/bin/python" -m pip install --no-deps --no-build-isolation "$PROJECT_DIR"
+# Force reinstall even when the project version is unchanged; source fixes must
+# replace stale site-packages code when the user reruns this installer.
+"$APP_DIR/venv/bin/python" -m pip install --no-deps --no-build-isolation --upgrade --force-reinstall "$PROJECT_DIR"
 ln -sf "$APP_DIR/venv/bin/chromeos-vm" "$BIN_DIR/chromeos-vm"
 ln -sf "$APP_DIR/venv/bin/chromeos-vm-update" "$BIN_DIR/chromeos-vm-update"
 
