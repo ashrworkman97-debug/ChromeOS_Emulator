@@ -66,6 +66,25 @@ class ManagerTests(unittest.TestCase):
         self.assertIn("boot: disk", config)
         self.assertNotIn("qemu", config.lower())
 
+    def test_generated_config_uses_detected_rom_paths(self):
+        cfg = self.manager.create("rom-path-test")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            config = self.manager.render_bochsrc(cfg)
+        self.assertIn('romimage: file="/mock/BIOS-bochs-latest"', config)
+        self.assertIn('vgaromimage: file="/mock/vgabios/vgabios.bin"', config)
+
+    def test_start_explains_missing_vga_rom(self):
+        self.manager.create("missing-rom-test")
+        fake = self.root / "fake-bochs"
+        fake.write_text("#!/bin/sh\\nexit 0\\n")
+        fake.chmod(0o755)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"), None]):
+            with self.assertRaisesRegex(VMError, "sudo apt install vgabios"):
+                self.manager.start("missing-rom-test", str(fake))
+
     def test_iso_attach(self):
         iso = self.root / "setup.iso"
         iso.write_bytes(b"not a real ISO; only tests image path validation")
