@@ -77,9 +77,9 @@ class ManagerTests(unittest.TestCase):
             "stderr": "",
             "returncode": 1,
         })()
-        with patch("chromeos_vm.manager.shutil.which", return_value="/usr/bin/dpkg-query"), \\
-             patch("chromeos_vm.manager.subprocess.run", return_value=completed):
-            found = self.manager._find_bios("VGABIOS-lgpl-latest")
+        with patch("chromeos_vm.manager.shutil.which", return_value="/usr/bin/dpkg-query"):
+            with patch("chromeos_vm.manager.subprocess.run", return_value=completed):
+                found = self.manager._find_bios("VGABIOS-lgpl-latest")
         self.assertEqual(found, rom.resolve())
 
     def test_generated_config_uses_detected_rom_paths(self):
