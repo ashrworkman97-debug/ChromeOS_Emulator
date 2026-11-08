@@ -4,6 +4,10 @@
 
 This project is at an early stage. The first usable backend is [Bochs](https://bochs.sourceforge.io/), a full-PC software emulator. ChromeOS VM Studio manages VM profiles, creates sparse virtual hard disks, attaches user-provided installation media, and starts each guest in Bochs's own graphical window. The installed app checks GitHub for updates automatically and can install new app versions without replacing VM data.
 
+## Editing an existing VM
+
+Select a VM in the library and choose **Edit VM…**. Stop the VM before changing settings. The editor can change RAM, Bochs CPU IPS, and the attached CD/DVD image; use **Eject ISO** to clear installation media. Save changes, then boot again. Virtual disk resizing is not supported yet.
+
 ## What runs where?
 
 - **Host:** Your Chromebook running ChromeOS.
