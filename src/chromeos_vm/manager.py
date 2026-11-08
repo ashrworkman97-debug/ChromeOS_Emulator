@@ -167,7 +167,6 @@ class VMManager:
         cfg = self.load(name)
         updated = VMConfig(**{**asdict(cfg), "iso_path": self._validate_iso(iso) if iso else None})
         self._save(updated)
-        self.write_bochsrc(updated)
         return updated
 
     @staticmethod
