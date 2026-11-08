@@ -146,7 +146,8 @@ class VMManager:
             self._save(config)
             (directory / "logs").mkdir()
             (directory / "runtime").mkdir()
-            self.write_bochsrc(config)
+            # ROM availability is checked at boot time; VM profiles and disks
+            # can be created before Bochs packages have finished installing.
             return config
         except Exception:
             shutil.rmtree(directory, ignore_errors=True)
