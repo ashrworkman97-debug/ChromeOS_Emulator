@@ -34,7 +34,7 @@ chmod +x scripts/install-crostini.sh
 ./scripts/install-crostini.sh
 ```
 
-The installer uses Debian packages for Bochs, its SDL display plugin, both Bochs BIOS packages, Tkinter, and Python packaging tools. It creates a Python virtual environment under `~/.local/opt/chromeos-vm-studio` and registers a desktop launcher. After installation, launch **ChromeOS VM Studio** from the ChromeOS Launcher (under Linux apps).
+The installer uses Debian packages for Bochs, its SDL display plugin, the Bochs system BIOS, the separate VGA BIOS package, Tkinter, and Python packaging tools. On Debian 13 (Trixie), `bochsbios` installs `/usr/share/bochs/BIOS-bochs-latest`, while `vgabios` installs the standard VGA ROM at `/usr/share/vgabios/vgabios.bin`. It does **not** install Bochs' upstream default `/usr/share/bochs/VGABIOS-lgpl-latest.bin` path. The app resolves the files from Debian's package manifest and explicitly supplies both ROM paths to Bochs. It creates a Python virtual environment under `~/.local/opt/chromeos-vm-studio` and registers a desktop launcher. After installation, launch **ChromeOS VM Studio** from the ChromeOS Launcher (under Linux apps).
 
 If you already have the dependencies, run the app from the project directory with:
 
@@ -52,7 +52,7 @@ Use the **Updates** button in the manager to check immediately, or run:
 chromeos-vm update --force
 ```
 
-The initial updater must be installed once. For an older copy that was installed before automatic updates existed, update the source checkout and rerun the installer one time:
+The initial updater must be installed once. For an older copy or a repair, update the source checkout and rerun the installer one time. The installer force-reinstalls the Python package even when the version number is unchanged, preventing stale code in `site-packages` after a source refresh:
 
 ```sh
 cd ~/ChromeOS_Emulator
@@ -88,7 +88,7 @@ VMs live in `~/.local/share/chromeos-vm-studio` by default. Set `CHROMEOS_VM_HOM
 - Bochs is software emulation. It is slower than a KVM-backed VM and can be CPU-intensive on a low-power Chromebook.
 - The app itself works inside the Crostini Linux environment; it does not have direct privileged access to ChromeOS's host virtualization services.
 - Nested virtualization/KVM is not assumed and is not needed by the Bochs backend.
-- The app does not bundle operating-system installation media or proprietary firmware/ROM dumps. Use media and firmware that you are legally entitled to use. The installer installs Debian's `bochsbios` and `vgabios` packages; the app checks for the ROM files and reports an install command rather than relying on Bochs's missing default VGA ROM path.
+- The app does not bundle operating-system installation media or proprietary firmware/ROM dumps. Use media and firmware that you are legally entitled to use. The installer installs Debian's `bochsbios` and `vgabios` packages. On Debian 13, the VGA ROM is `/usr/share/vgabios/vgabios.bin`; do not create a symlink to the non-existent `/usr/share/bochs/VGABIOS-lgpl-latest.bin`. The app writes the discovered ROM path into its generated Bochs config and also passes it as an explicit Bochs command-line override.
 - The graphical VM manager currently launches Bochs in its own window rather than embedding the guest display.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) for details.
