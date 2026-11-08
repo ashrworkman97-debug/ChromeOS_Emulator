@@ -46,3 +46,36 @@ jobs:
               print(f"System BIOS: {system_bios}")
               print(f"VGA BIOS: {vga_bios}")
           PY
+
+  native-gui-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tk and virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk xvfb
+      - name: Instantiate and exercise the native Tk manager
+        run: |
+          PYTHONPATH=src xvfb-run -a /usr/bin/python3 - <<'PY'
+          import tempfile
+          import tkinter as tk
+          from pathlib import Path
+          from chromeos_vm.gui import ChromeOSVMStudio
+          from chromeos_vm.manager import VMManager
+
+          with tempfile.TemporaryDirectory() as temp:
+              root = tk.Tk()
+              manager = VMManager(Path(temp) / "vms")
+              app = ChromeOSVMStudio(root, manager)
+              root.update_idletasks()
+              assert root.title() == "ChromeOS VM Studio"
+              assert app.table.winfo_exists()
+              manager.create("dos-test", memory_mib=128, disk_gib=1)
+              app.refresh()
+              assert app.table.exists("dos-test")
+              assert app.table.set("dos-test", "state") == "Stopped"
+              assert app.table.tag_has("stopped", "dos-test")
+              root.destroy()
+          print("Native Tk GUI smoke test passed.")
+          PY
