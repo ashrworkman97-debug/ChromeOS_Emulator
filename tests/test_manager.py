@@ -1,6 +1,7 @@
 import os
 import shlex
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -104,6 +105,10 @@ class ManagerTests(unittest.TestCase):
         fake.chmod(0o755)
         pid = self.manager.start("launch-test", str(fake))
         self.assertGreater(pid, 0)
+        deadline = time.monotonic() + 2
+        while not args_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(args_file.exists(), "mock Bochs did not record its arguments")
         self.assertTrue(self.manager.is_running("launch-test"))
         self.assertEqual(
             args_file.read_text().splitlines(),
