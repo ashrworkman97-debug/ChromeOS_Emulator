@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 
 from .manager import VMError, VMManager
+from .updater import UpdateResult, check_for_updates
 
 
 class ChromeOSVMStudio:
@@ -18,6 +20,9 @@ class ChromeOSVMStudio:
         root.minsize(640, 380)
         self._build()
         self.refresh()
+        # Check for updates off the UI thread; the updater throttles automatic
+        # checks so launching the app does not contact GitHub every time.
+        self.root.after(1800, lambda: self.check_updates(manual=False))
 
     def _build(self) -> None:
         outer = ttk.Frame(self.root, padding=14)
@@ -52,6 +57,7 @@ class ChromeOSVMStudio:
             ("Logs", self.show_logs),
             ("Delete", self.delete_vm),
             ("Refresh", self.refresh),
+            ("Updates", self.check_updates),
         ]
         for label, callback in actions:
             ttk.Button(bar, text=label, command=callback).pack(side="left", padx=(0, 5))
@@ -61,6 +67,40 @@ class ChromeOSVMStudio:
         note = "Guests run in a separate Bochs window. Software emulation is CPU-intensive; older x86 systems are the best fit."
         ttk.Label(outer, text=note, foreground="#666").pack(anchor="w", pady=(5, 0))
         self.root.after(1200, self._poll)
+
+    def check_updates(self, manual: bool = True) -> None:
+        self.status.set("Checking GitHub for ChromeOS VM Studio updates…")
+
+        def worker() -> None:
+            result = check_for_updates(force=manual)
+            try:
+                self.root.after(0, lambda: self._show_update_result(result, manual))
+            except tk.TclError:
+                pass  # The user closed the window while the check was running.
+
+        threading.Thread(target=worker, name="vm-studio-updater", daemon=True).start()
+
+    def _show_update_result(self, result: UpdateResult, manual: bool) -> None:
+        if result.status == "updated":
+            self.status.set(result.message)
+            if messagebox.askyesno(
+                "Update installed",
+                result.message + "\\n\\nRestart the manager now? Any running guest remains a separate Bochs process; close guests safely first.",
+                parent=self.root,
+            ):
+                self.root.destroy()
+                # Relaunch the installed entry point using the same interpreter.
+                import sys
+                subprocess.Popen([sys.executable, "-m", "chromeos_vm.gui"],
+                                 start_new_session=True, close_fds=True)
+        elif result.status == "current":
+            self.status.set("ChromeOS VM Studio is up to date.")
+            if manual:
+                messagebox.showinfo("No updates available", result.message, parent=self.root)
+        else:
+            self.status.set("Automatic update check failed; the current app is still available.")
+            if manual:
+                messagebox.showwarning("Update check failed", result.message, parent=self.root)
 
     def selected_name(self) -> str | None:
         selection = self.table.selection()
