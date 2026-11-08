@@ -45,9 +45,13 @@ def main(argv: list[str] | None = None) -> int:
             bochs = manager.find_bochs()
             print(f"Host: {sys.platform}")
             print(f"Bochs: {bochs or 'not installed'}")
+            system_bios = manager._find_bios("BIOS-bochs-latest")
+            vga_bios = manager._find_bios("VGABIOS-lgpl-latest")
+            print(f"System BIOS: {system_bios or 'missing (install bochsbios)'}")
+            print(f"VGA BIOS: {vga_bios or 'missing (install vgabios)'}")
             print(f"Tkinter: {'available' if _tk_available() else 'not installed'}")
             print("ChromeOS Linux integration: use the Linux development environment (Crostini).")
-            ready = bool(bochs and _tk_available())
+            ready = bool(bochs and system_bios and vga_bios and _tk_available())
             print("Result: ready" if ready else "Result: install missing desktop packages.")
             return 0 if ready else 1
         if args.command == "create":
