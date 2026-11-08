@@ -171,16 +171,40 @@ class VMManager:
 
     @staticmethod
     def _find_bios(filename: str) -> Path | None:
-        """Find package-provided Bochs system/VGA ROMs across Debian layouts."""
-        env_root = Path(os.environ["BXSHARE"]) if os.environ.get("BXSHARE") else None
+        """Resolve ROMs from installed Debian package manifests and known paths.
+
+        Debian Trixie ships the Bochs VGA ROM at
+        /usr/share/bochs/VGABIOS-lgpl-latest (without the upstream .bin suffix).
+        Other distributions may ship the .bin name or place ROMs in BXSHARE.
+        """
         if filename == "BIOS-bochs-latest":
             names = ("BIOS-bochs-latest", "BIOS-bochs-legacy", "bios.bin")
+            matches = lambda p: p.name in names
         else:
             names = (
-                "VGABIOS-lgpl-latest.bin", "VGABIOS-lgpl-latest",
+                "VGABIOS-lgpl-latest", "VGABIOS-lgpl-latest.bin",
                 "vgabios.bin", "vgabios-stdvga.bin",
                 "vgabios-bochs-display.bin", "VGABIOS-elpin-2.40",
             )
+            matches = lambda p: p.name in names or (
+                p.name.startswith("VGABIOS-") and p.is_file()
+            )
+
+        # Prefer paths recorded by dpkg. This is more reliable than assuming
+        # the ROM filename matches Bochs' compiled-in default.
+        package_paths: list[Path] = []
+        if shutil.which("dpkg-query"):
+            try:
+                result = subprocess.run(
+                    ["dpkg-query", "-L", "bochs", "bochsbios", "vgabios", "seabios"],
+                    capture_output=True, text=True, check=False, timeout=10,
+                )
+                package_paths.extend(Path(line.strip()) for line in result.stdout.splitlines()
+                                     if line.strip().startswith("/"))
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+        env_root = Path(os.environ["BXSHARE"]) if os.environ.get("BXSHARE") else None
         roots = []
         if env_root:
             roots.append(env_root)
@@ -191,11 +215,14 @@ class VMManager:
             Path("/usr/share/seabios"),
             Path("/usr/local/share/bochs"),
         ])
-        for root in roots:
-            for name in names:
-                candidate = root / name
+        candidates = [path for path in package_paths if matches(path)]
+        candidates.extend(root / name for root in roots for name in names)
+        for candidate in candidates:
+            try:
                 if candidate.is_file() and os.access(candidate, os.R_OK):
-                    return candidate
+                    return candidate.resolve()
+            except OSError:
+                continue
         return None
 
     def render_bochsrc(self, cfg: VMConfig) -> str:
@@ -206,10 +233,16 @@ class VMManager:
         ]
         bios = self._find_bios("BIOS-bochs-latest")
         vgabios = self._find_bios("VGABIOS-lgpl-latest")
-        if bios:
-            lines.append(f"romimage: file={bochs_quote(bios)}")
-        if vgabios:
-            lines.append(f"vgaromimage: file={bochs_quote(vgabios)}")
+        if not bios:
+            raise VMError("Bochs system BIOS not found. Run: sudo apt update && sudo apt install -y bochsbios")
+        if not vgabios:
+            raise VMError(
+                "Bochs VGA BIOS not found. Debian Trixie normally installs "
+                "/usr/share/bochs/VGABIOS-lgpl-latest. Run: "
+                "sudo apt update && sudo apt install -y vgabios"
+            )
+        lines.append(f"romimage: file={bochs_quote(bios)}")
+        lines.append(f"vgaromimage: file={bochs_quote(vgabios)}")
         lines.extend([
             "display_library: sdl2",
             "vga: extension=vbe",
