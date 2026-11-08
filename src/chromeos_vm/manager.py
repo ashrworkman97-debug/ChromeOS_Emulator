@@ -1,34 +1,66 @@
-"""VM storage, host checks, and crosvm process management. No QEMU backend."""
+"""VM profiles and process management for the native Crostini app.
+
+Bochs supplies the full x86 PC emulation. This module manages its files and
+starts its real GUI window; it does not emulate hardware itself and never
+invokes QEMU.
+"""
 from __future__ import annotations
 
 import json
 import os
-import platform
 import re
 import shutil
+import signal
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$")
-CONFIG_VERSION = 1
-MIN_MEMORY_MIB, MAX_MEMORY_MIB, MAX_CPUS, MAX_DISK_GIB = 256, 262144, 64, 2048
+CONFIG_VERSION = 2
+MIN_MEMORY_MIB, MAX_MEMORY_MIB = 16, 4096
+MIN_DISK_GIB, MAX_DISK_GIB = 1, 512
+MIN_IPS, MAX_IPS = 100_000, 500_000_000
 
 
 class VMError(RuntimeError):
     """A user-correctable VM or host configuration error."""
 
 
+def validate_name(name: str) -> None:
+    if not isinstance(name, str) or not NAME_PATTERN.fullmatch(name):
+        raise VMError("Names must start with a letter/number and use only letters, numbers, - or _ (48 chars max).")
+
+
+def validate_resources(memory_mib: int, disk_gib: int, cpu_ips: int) -> None:
+    if any(type(v) is not int for v in (memory_mib, disk_gib, cpu_ips)):
+        raise VMError("RAM, disk size, and emulated CPU speed must be whole numbers.")
+    if not MIN_MEMORY_MIB <= memory_mib <= MAX_MEMORY_MIB:
+        raise VMError(f"RAM must be {MIN_MEMORY_MIB}–{MAX_MEMORY_MIB} MiB.")
+    if not MIN_DISK_GIB <= disk_gib <= MAX_DISK_GIB:
+        raise VMError(f"Disk size must be {MIN_DISK_GIB}–{MAX_DISK_GIB} GiB.")
+    if not MIN_IPS <= cpu_ips <= MAX_IPS:
+        raise VMError(f"CPU speed must be {MIN_IPS:,}–{MAX_IPS:,} instructions per second.")
+
+
+def bochs_quote(value: str | Path) -> str:
+    """Quote a local path for a Bochs config; reject parser-unsafe characters."""
+    value = str(value)
+    if any(ch in value for ch in ('"', "\n", "\r", "\x00")):
+        raise VMError("A file path contains characters that cannot safely be written to a Bochs config.")
+    return '"' + value.replace("\\", "\\\\") + '"'
+
+
 @dataclass(frozen=True)
 class VMConfig:
     name: str
     memory_mib: int
-    cpus: int
     disk_gib: int
     disk_path: str
-    kernel_path: str | None = None
-    backend: str = "crosvm"
+    iso_path: str | None = None
+    cpu_ips: int = 10_000_000
+    backend: str = "bochs"
     disk_format: str = "raw"
     config_version: int = CONFIG_VERSION
 
@@ -41,26 +73,10 @@ class VMConfig:
         if config.config_version != CONFIG_VERSION:
             raise VMError(f"Unsupported VM config version {config.config_version}.")
         validate_name(config.name)
-        validate_resources(config.memory_mib, config.cpus, config.disk_gib)
-        if config.backend != "crosvm" or config.disk_format != "raw":
-            raise VMError("Only the crosvm backend and raw disks are supported.")
+        validate_resources(config.memory_mib, config.disk_gib, config.cpu_ips)
+        if config.backend != "bochs" or config.disk_format != "raw":
+            raise VMError("This version supports the Bochs backend and raw disks only.")
         return config
-
-
-def validate_name(name: str) -> None:
-    if not isinstance(name, str) or not NAME_PATTERN.fullmatch(name):
-        raise VMError("Names must start with a letter/number and use only letters, numbers, - or _ (48 chars max).")
-
-
-def validate_resources(memory_mib: int, cpus: int, disk_gib: int) -> None:
-    if any(type(v) is not int for v in (memory_mib, cpus, disk_gib)):
-        raise VMError("Memory, CPU count, and disk size must be whole numbers.")
-    if not MIN_MEMORY_MIB <= memory_mib <= MAX_MEMORY_MIB:
-        raise VMError(f"Memory must be {MIN_MEMORY_MIB}–{MAX_MEMORY_MIB} MiB.")
-    if not 1 <= cpus <= MAX_CPUS:
-        raise VMError(f"CPU count must be 1–{MAX_CPUS}.")
-    if not 1 <= disk_gib <= MAX_DISK_GIB:
-        raise VMError(f"Disk size must be 1–{MAX_DISK_GIB} GiB.")
 
 
 class VMManager:
@@ -94,49 +110,111 @@ class VMManager:
         temp.write_text(json.dumps(asdict(config), indent=2) + "\n", encoding="utf-8")
         temp.replace(path)
 
-    def create(self, name: str, memory_mib: int = 4096, cpus: int = 2,
-               disk_gib: int = 32, kernel: Path | str | None = None) -> VMConfig:
+    def create(self, name: str, memory_mib: int = 512, disk_gib: int = 8,
+               cpu_ips: int = 10_000_000, iso: Path | str | None = None) -> VMConfig:
         validate_name(name)
-        validate_resources(memory_mib, cpus, disk_gib)
-        kernel_value = None
-        if kernel is not None:
-            kp = Path(kernel).expanduser().resolve()
-            if not kp.is_file() or not os.access(kp, os.R_OK):
-                raise VMError(f"Kernel image is not readable: {kp}")
-            kernel_value = str(kp)
+        validate_resources(memory_mib, disk_gib, cpu_ips)
+        iso_value = self._validate_iso(iso) if iso else None
         directory = self.vm_path(name)
         if directory.exists():
             raise VMError(f"VM '{name}' already exists.")
-        directory.mkdir()
+        directory.mkdir(parents=True)
         try:
             disk = directory / "disk.raw"
             with disk.open("xb") as stream:
                 stream.truncate(disk_gib * 1024**3)
-            config = VMConfig(name, memory_mib, cpus, disk_gib, str(disk.resolve()), kernel_value)
+            config = VMConfig(name=name, memory_mib=memory_mib, disk_gib=disk_gib,
+                              disk_path=str(disk.resolve()), iso_path=iso_value, cpu_ips=cpu_ips)
             self._save(config)
             (directory / "logs").mkdir()
             (directory / "runtime").mkdir()
+            self.write_bochsrc(config)
             return config
         except Exception:
             shutil.rmtree(directory, ignore_errors=True)
             raise
 
-    def set_kernel(self, name: str, kernel: Path | str) -> VMConfig:
-        config = self.load(name)
-        kp = Path(kernel).expanduser().resolve()
-        if not kp.is_file() or not os.access(kp, os.R_OK):
-            raise VMError(f"Kernel image is not readable: {kp}")
-        updated = VMConfig(**{**asdict(config), "kernel_path": str(kp)})
+    @staticmethod
+    def _validate_iso(iso: Path | str) -> str:
+        path = Path(iso).expanduser().resolve()
+        if not path.is_file() or not os.access(path, os.R_OK):
+            raise VMError(f"Installation image is not a readable file: {path}")
+        if path.suffix.lower() not in {".iso", ".img", ".ima"}:
+            raise VMError("Choose an ISO or floppy/disk image file.")
+        bochs_quote(path)
+        return str(path)
+
+    def set_iso(self, name: str, iso: Path | str | None) -> VMConfig:
+        cfg = self.load(name)
+        updated = VMConfig(**{**asdict(cfg), "iso_path": self._validate_iso(iso) if iso else None})
         self._save(updated)
+        self.write_bochsrc(updated)
         return updated
 
+    @staticmethod
+    def _find_bios(filename: str) -> Path | None:
+        roots = []
+        if os.environ.get("BXSHARE"):
+            roots.append(Path(os.environ["BXSHARE"]))
+        roots.extend([Path("/usr/share/bochs"), Path("/usr/share/bochsbios")])
+        for root in roots:
+            candidate = root / filename
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def render_bochsrc(self, cfg: VMConfig) -> str:
+        lines = [
+            "# Generated by ChromeOS VM Studio. Edit the VM profile in the app.",
+            f"megs: {cfg.memory_mib}",
+            f"cpu: count=1, ips={cfg.cpu_ips}, reset_on_triple_fault=1",
+        ]
+        bios = self._find_bios("BIOS-bochs-latest")
+        vgabios = self._find_bios("VGABIOS-lgpl-latest")
+        if bios:
+            lines.append(f"romimage: file={bochs_quote(bios)}")
+        if vgabios:
+            lines.append(f"vgaromimage: file={bochs_quote(vgabios)}")
+        lines.extend([
+            "vga: extension=vbe",
+            "mouse: enabled=1",
+            'ata0-master: type=disk, mode=flat, path=' + bochs_quote(cfg.disk_path) + ", cylinders=0",
+        ])
+        if cfg.iso_path:
+            lines.append('ata0-slave: type=cdrom, path=' + bochs_quote(cfg.iso_path) + ", status=inserted")
+            lines.append("boot: cdrom, disk")
+        else:
+            lines.append("boot: disk")
+        lines.extend([
+            "log: " + bochs_quote(self.vm_path(cfg.name) / "logs/bochs.log"),
+            "panic: action=ask",
+            "error: action=report",
+            "info: action=report",
+            "debug: action=ignore",
+            "",
+        ])
+        return "\n".join(lines)
+
+    def write_bochsrc(self, config: VMConfig) -> Path:
+        path = self.vm_path(config.name) / "bochsrc"
+        path.write_text(self.render_bochsrc(config), encoding="utf-8")
+        return path
+
     def list_vms(self) -> list[VMConfig]:
-        return [self.load(p.name) for p in sorted(self.home.iterdir())
-                if p.is_dir() and not p.is_symlink() and (p / "vm.json").is_file()]
+        result = []
+        for path in sorted(self.home.iterdir()):
+            if path.is_dir() and not path.is_symlink() and (path / "vm.json").is_file():
+                result.append(self.load(path.name))
+        return result
+
+    @staticmethod
+    def find_bochs(override: str | None = None) -> str | None:
+        candidate = override or shutil.which("bochs")
+        return str(Path(candidate).expanduser().resolve()) if candidate and Path(candidate).is_file() else None
 
     def is_running(self, name: str) -> bool:
         self.load(name)
-        pid_file = self.vm_path(name) / "runtime/crosvm.pid"
+        pid_file = self.vm_path(name) / "runtime/bochs.pid"
         try:
             pid = int(pid_file.read_text(encoding="ascii").strip())
         except (OSError, ValueError):
@@ -148,69 +226,56 @@ class VMManager:
             return False
         except PermissionError:
             return True
+        # Linux reports a terminated-but-not-yet-reaped child as state Z.
+        stat_file = Path(f"/proc/{pid}/stat")
+        try:
+            fields = stat_file.read_text(encoding="ascii").split()
+            if len(fields) > 2 and fields[2] == "Z":
+                pid_file.unlink(missing_ok=True)
+                return False
+        except OSError:
+            pass
         return True
 
-    def environment(self, crosvm_override: str | None = None) -> dict[str, Any]:
-        kvm = Path("/dev/kvm")
-        return {"platform": platform.system(), "architecture": platform.machine(),
-                "crosvm": crosvm_override or shutil.which("crosvm"),
-                "kvm_device": kvm.exists(), "kvm_readable": os.access(kvm, os.R_OK),
-                "kvm_writable": os.access(kvm, os.W_OK)}
-
-    def start(self, name: str, crosvm_override: str | None = None) -> int:
+    def start(self, name: str, bochs_override: str | None = None) -> int:
         cfg = self.load(name)
         if self.is_running(name):
-            raise VMError(f"VM '{name}' appears to be running.")
-        if not cfg.kernel_path:
-            raise VMError("No kernel configured; use 'chromeos-vm configure NAME --kernel PATH'.")
-        kernel, disk = Path(cfg.kernel_path), Path(cfg.disk_path)
-        if not kernel.is_file():
-            raise VMError(f"Configured kernel is missing: {kernel}")
-        if not disk.is_file():
-            raise VMError(f"Virtual disk is missing: {disk}")
-        env = self.environment(crosvm_override)
-        if env["platform"] != "Linux":
-            raise VMError("The implemented backend requires Linux with KVM.")
-        if not env["crosvm"]:
-            raise VMError("crosvm was not found; install it first.")
-        if not env["kvm_device"]:
-            raise VMError("/dev/kvm is missing; expose hardware virtualization to this host/container.")
-        if not env["kvm_readable"] or not env["kvm_writable"]:
-            raise VMError("The current user needs read/write access to /dev/kvm.")
-        runtime = self.vm_path(name) / "runtime"
-        sock = runtime / "crosvm.sock"
-        sock.unlink(missing_ok=True)
-        command = [str(env["crosvm"]), "run", "--cpus", str(cfg.cpus), "--mem",
-                   str(cfg.memory_mib), "--block", str(disk), "-s", str(sock),
-                   "--serial", "type=stdout,console,stdin", str(kernel)]
-        log = self.vm_path(name) / "logs/crosvm.log"
+            raise VMError(f"VM '{name}' appears to be running already.")
+        executable = self.find_bochs(bochs_override)
+        if not executable:
+            raise VMError("Bochs was not found. Install it with: sudo apt install bochs bochs-sdl")
+        if not cfg.disk_path or not Path(cfg.disk_path).is_file():
+            raise VMError("The VM's virtual disk is missing.")
+        config_file = self.write_bochsrc(cfg)
+        log = self.vm_path(name) / "logs/launcher.log"
         try:
             with log.open("ab") as output:
-                proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
-                                        stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+                proc = subprocess.Popen([executable, "-qf", str(config_file)],
+                                         cwd=self.vm_path(name), stdin=subprocess.DEVNULL,
+                                         stdout=output, stderr=subprocess.STDOUT,
+                                         start_new_session=True, close_fds=True)
         except OSError as exc:
-            raise VMError(f"Could not start crosvm: {exc}") from exc
-        (runtime / "crosvm.pid").write_text(f"{proc.pid}\n", encoding="ascii")
+            raise VMError(f"Could not launch Bochs: {exc}") from exc
+        (self.vm_path(name) / "runtime/bochs.pid").write_text(f"{proc.pid}\n", encoding="ascii")
         return proc.pid
 
-    def stop(self, name: str, crosvm_override: str | None = None) -> None:
+    def stop(self, name: str) -> None:
         self.load(name)
-        runtime = self.vm_path(name) / "runtime"
-        pid_file, sock = runtime / "crosvm.pid", runtime / "crosvm.sock"
+        pid_file = self.vm_path(name) / "runtime/bochs.pid"
         if not self.is_running(name):
             raise VMError(f"VM '{name}' is not running.")
-        exe = crosvm_override or shutil.which("crosvm")
-        if not exe:
-            raise VMError("crosvm not found; cannot request orderly shutdown.")
+        pid = int(pid_file.read_text(encoding="ascii").strip())
         try:
-            result = subprocess.run([exe, "stop", str(sock)], capture_output=True, text=True,
-                                    check=False, timeout=20)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise VMError(f"Could not request crosvm shutdown: {exc}") from exc
-        if result.returncode:
-            detail = (result.stderr or result.stdout).strip()
-            raise VMError("crosvm refused the stop request; VM was not force-killed. " + detail)
-        pid_file.unlink(missing_ok=True)
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pid_file.unlink(missing_ok=True)
+            return
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if not self.is_running(name):
+                return
+            time.sleep(0.1)
+        raise VMError("Bochs did not exit after SIGTERM. Close its emulator window; the process was not force-killed.")
 
     def delete(self, name: str) -> None:
         self.load(name)
