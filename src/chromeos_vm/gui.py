@@ -152,6 +152,8 @@ class ChromeOSVMStudio:
                   style="PanelHint.TLabel").pack(anchor="w", pady=(0, 5))
         ttk.Button(action_panel, text="Attach ISO…", style="Action.TButton",
                    command=self.attach_iso).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Edit VM…", style="Action.TButton",
+                   command=self.edit_vm).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Open folder", style="Action.TButton",
                    command=self.open_folder).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="View logs", style="Action.TButton",
@@ -312,6 +314,59 @@ class ChromeOSVMStudio:
             self._status(f"Stop signal sent to {name}.")
         except VMError as exc:
             messagebox.showerror("Could not stop VM", str(exc), parent=self.root)
+
+    def edit_vm(self) -> None:
+        """Edit a stopped VM's memory, CPU speed, and removable CD/DVD media."""
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        try:
+            cfg = self.manager.load(name)
+        except VMError as exc:
+            messagebox.showerror("Could not edit VM", str(exc), parent=self.root)
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Edit {name}")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill="both", expand=True)
+        ram = tk.StringVar(value=str(cfg.memory_mib))
+        cpu = tk.StringVar(value=str(cfg.cpu_ips))
+        iso = tk.StringVar(value=cfg.iso_path or "")
+
+        ttk.Label(frame, text="Memory (MiB)").grid(row=0, column=0, sticky="w", pady=6)
+        ttk.Entry(frame, textvariable=ram, width=42).grid(row=0, column=1, sticky="ew", pady=6)
+        ttk.Label(frame, text="CPU speed (Bochs IPS)").grid(row=1, column=0, sticky="w", pady=6)
+        ttk.Entry(frame, textvariable=cpu, width=42).grid(row=1, column=1, sticky="ew", pady=6)
+        ttk.Label(frame, text="CD/DVD image").grid(row=2, column=0, sticky="w", pady=6)
+        media_row = ttk.Frame(frame)
+        media_row.grid(row=2, column=1, sticky="ew", pady=6)
+        ttk.Entry(media_row, textvariable=iso, width=34).pack(side="left", fill="x", expand=True)
+        ttk.Button(media_row, text="Browse…", command=lambda: iso.set(
+            filedialog.askopenfilename(parent=dialog,
+                filetypes=[("Disk images", "*.iso *.img *.ima"), ("All files", "*")])
+            or iso.get())).pack(side="left", padx=(5, 0))
+        ttk.Button(media_row, text="Eject ISO", command=lambda: iso.set("")).pack(side="left", padx=(5, 0))
+        ttk.Label(frame, text=f"Virtual disk: {cfg.disk_gib} GiB (disk resizing is not supported yet).",
+                  foreground="#666").grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 12))
+
+        def save() -> None:
+            try:
+                self.manager.update_profile(name, int(ram.get()), int(cpu.get()), iso.get().strip() or None)
+                dialog.destroy()
+                self.refresh()
+                self._status(f"Saved {name}. Changes apply the next time the VM boots.")
+            except (ValueError, VMError, OSError) as exc:
+                messagebox.showerror("Could not save VM", str(exc), parent=dialog)
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
+        ttk.Button(buttons, text="Save changes", command=save).pack(side="right")
+        frame.columnconfigure(1, weight=1)
 
     def attach_iso(self) -> None:
         name = self.selected_name()
