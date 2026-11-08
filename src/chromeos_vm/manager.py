@@ -316,10 +316,16 @@ class VMManager:
         executable = self.find_bochs(bochs_override)
         if not executable:
             raise VMError("Bochs was not found. Install it with: sudo apt install bochs bochs-sdl")
-        if not self._find_bios("BIOS-bochs-latest"):
-            raise VMError("Bochs system BIOS was not found. Install it with: sudo apt install bochsbios")
-        if not self._find_bios("VGABIOS-lgpl-latest"):
-            raise VMError("Bochs VGA BIOS was not found. Install it with: sudo apt install vgabios (or seabios)")
+        system_bios = self._find_bios("BIOS-bochs-latest")
+        if not system_bios:
+            raise VMError("Bochs system BIOS was not found. Run: sudo apt update && sudo apt install -y bochsbios")
+        vga_bios = self._find_bios("VGABIOS-lgpl-latest")
+        if not vga_bios:
+            raise VMError(
+                "Bochs VGA BIOS was not found. Debian's Bochs package normally places it at "
+                "/usr/share/bochs/VGABIOS-lgpl-latest (without .bin). Run: "
+                "sudo apt update && sudo apt install -y vgabios"
+            )
         if not cfg.disk_path or not Path(cfg.disk_path).is_file():
             raise VMError("The VM's virtual disk is missing.")
         config_file = self.write_bochsrc(cfg)
