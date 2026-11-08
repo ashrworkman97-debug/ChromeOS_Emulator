@@ -58,13 +58,29 @@ class ManagerTests(unittest.TestCase):
         cylinders, heads, sectors, expected_bytes = disk_geometry(1)
         self.assertEqual(disk.stat().st_size, expected_bytes)
         self.assertEqual(disk.stat().st_size, cylinders * heads * sectors * 512)
-        config = (self.manager.vm_path(cfg.name) / "bochsrc").read_text()
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/VGABIOS-lgpl-latest")]):
+            config = self.manager.render_bochsrc(cfg)
         self.assertIn("megs: 512", config)
         self.assertIn("display_library: sdl2", config)
         self.assertIn(f"cylinders={cylinders}, heads={heads}, spt={sectors}", config)
         self.assertIn("ata0-master: type=disk", config)
         self.assertIn("boot: disk", config)
         self.assertNotIn("qemu", config.lower())
+
+    def test_finds_debian_trixie_vga_rom_name_without_bin_suffix(self):
+        rom = self.root / "VGABIOS-lgpl-latest"
+        rom.write_bytes(b"mock VGA BIOS")
+        completed = type("Result", (), {
+            "stdout": str(rom) + "\\n",
+            "stderr": "",
+            "returncode": 1,
+        })()
+        with patch("chromeos_vm.manager.shutil.which", return_value="/usr/bin/dpkg-query"), \\
+             patch("chromeos_vm.manager.subprocess.run", return_value=completed):
+            found = self.manager._find_bios("VGABIOS-lgpl-latest")
+        self.assertEqual(found, rom.resolve())
 
     def test_generated_config_uses_detected_rom_paths(self):
         cfg = self.manager.create("rom-path-test")
@@ -91,7 +107,10 @@ class ManagerTests(unittest.TestCase):
         cfg = self.manager.create("install-me", iso=iso)
         cfg = self.manager.set_iso(cfg.name, iso)
         self.assertEqual(cfg.iso_path, str(iso.resolve()))
-        config = (self.manager.vm_path(cfg.name) / "bochsrc").read_text()
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/VGABIOS-lgpl-latest")]):
+            config = self.manager.render_bochsrc(cfg)
         self.assertIn("type=cdrom", config)
         self.assertIn("boot: cdrom, disk", config)
 
