@@ -1,0 +1,27 @@
+# Compatibility notes
+
+| Layer | Current position |
+|---|---|
+| Host OS | ChromeOS with Linux development environment (Crostini) enabled |
+| App UI | Native Linux GUI app (Tkinter); no browser UI |
+| Emulator | Bochs full-PC x86 software emulation |
+| QEMU | Not used |
+| KVM | Not required for Bochs |
+| Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
+| Guest display | Bochs's own GUI window |
+
+## Crostini
+
+ChromeOS officially supports Linux GUI apps integrated alongside ChromeOS apps. The app runs inside this supported Linux environment; it is not a privileged ChromeOS host utility.
+
+Nested virtualization has varied by ChromeOS device/kernel and should not be assumed. The base Bochs path deliberately avoids that dependency. If an optional KVM backend is added later, it must probe the actual runtime environment and report when /dev/kvm or required permissions are missing.
+
+## Bochs guest compatibility
+
+Bochs models a broad set of x86 CPUs and standard PC devices, including VGA, IDE hard disks, ATAPI CD-ROM, keyboard, mouse, sound and selected network adapters depending on build options. Bochs supports x86-64 extensions, but that does not guarantee every modern OS installer or peripheral works with every Bochs configuration.
+
+Software instruction emulation is expensive. Start with modest guest RAM and older/lightweight guest systems. Performance will be limited on low-power Chromebook CPUs. Windows 10/11 is not a target performance promise.
+
+## Required user inputs
+
+The app creates an empty virtual hard disk. The user supplies legally obtained guest installation ISO/disk images. Firmware ROM availability depends on the distro's Bochs/BIOS packages; the project does not package proprietary ROM dumps.
