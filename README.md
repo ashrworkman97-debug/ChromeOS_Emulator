@@ -2,7 +2,7 @@
 
 **A native desktop VM/emulator manager for Chromebooks.** It runs as a Linux application inside ChromeOS's Linux development environment (Crostini), and emulates other x86 PC operating systems. It does **not** emulate ChromeOS, run in a browser, or use QEMU.
 
-This project is at an early stage. The first usable backend is [Bochs](https://bochs.sourceforge.io/), a full-PC software emulator. ChromeOS VM Studio manages VM profiles, creates sparse virtual hard disks, attaches user-provided installation media, and starts each guest in Bochs's own graphical window.
+This project is at an early stage. The first usable backend is [Bochs](https://bochs.sourceforge.io/), a full-PC software emulator. ChromeOS VM Studio manages VM profiles, creates sparse virtual hard disks, attaches user-provided installation media, and starts each guest in Bochs's own graphical window. The installed app checks GitHub for updates automatically and can install new app versions without replacing VM data.
 
 ## What runs where?
 
@@ -34,13 +34,33 @@ chmod +x scripts/install-crostini.sh
 ./scripts/install-crostini.sh
 ```
 
-The installer uses Debian packages for Bochs, its SDL display plugin, Tkinter, and Python packaging tools. It creates a Python virtual environment under `~/.local/opt/chromeos-vm-studio` and registers a desktop launcher. After installation, launch **ChromeOS VM Studio** from the ChromeOS Launcher (under Linux apps).
+The installer uses Debian packages for Bochs, its SDL display plugin, both Bochs BIOS packages, Tkinter, and Python packaging tools. It creates a Python virtual environment under `~/.local/opt/chromeos-vm-studio` and registers a desktop launcher. After installation, launch **ChromeOS VM Studio** from the ChromeOS Launcher (under Linux apps).
 
 If you already have the dependencies, run the app from the project directory with:
 
 ```sh
 PYTHONPATH=src python3 -m chromeos_vm.gui
 ```
+
+## Automatic updates
+
+The app checks the repository's latest `main` commit in the background shortly after launch. Automatic checks are throttled to once every 12 hours. If a newer commit exists, the updater downloads the GitHub source archive, validates and safely extracts it, and reinstalls the Python application into the existing private virtual environment. It then asks you to restart the manager to load the new code. Guest profiles and virtual disks remain in `~/.local/share/chromeos-vm-studio`; the updater does not delete or rewrite them.
+
+Use the **Updates** button in the manager to check immediately, or run:
+
+```sh
+chromeos-vm update --force
+```
+
+The initial updater must be installed once. For an older copy that was installed before automatic updates existed, update the source checkout and rerun the installer one time:
+
+```sh
+cd ~/ChromeOS_Emulator
+git pull --ff-only
+./scripts/install-crostini.sh
+```
+
+After that, future app updates are installed by the app itself. A network connection is required. The updater follows this repository's `main` branch; it updates app code only, not guest operating systems or VM disks.
 
 ## Create and boot a guest
 
@@ -68,7 +88,7 @@ VMs live in `~/.local/share/chromeos-vm-studio` by default. Set `CHROMEOS_VM_HOM
 - Bochs is software emulation. It is slower than a KVM-backed VM and can be CPU-intensive on a low-power Chromebook.
 - The app itself works inside the Crostini Linux environment; it does not have direct privileged access to ChromeOS's host virtualization services.
 - Nested virtualization/KVM is not assumed and is not needed by the Bochs backend.
-- The app does not bundle operating-system installation media or proprietary firmware/ROM dumps. Use media and firmware that you are legally entitled to use.
+- The app does not bundle operating-system installation media or proprietary firmware/ROM dumps. Use media and firmware that you are legally entitled to use. The installer installs Debian's `bochsbios` and `vgabios` packages; the app checks for the ROM files and reports an install command rather than relying on Bochs's missing default VGA ROM path.
 - The graphical VM manager currently launches Bochs in its own window rather than embedding the guest display.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) for details.
