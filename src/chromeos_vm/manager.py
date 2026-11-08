@@ -239,8 +239,8 @@ class VMManager:
             raise VMError("Bochs system BIOS not found. Run: sudo apt update && sudo apt install -y bochsbios")
         if not vgabios:
             raise VMError(
-                "Bochs VGA BIOS not found. Debian Trixie normally installs "
-                "/usr/share/bochs/VGABIOS-lgpl-latest. Run: "
+                "Bochs VGA BIOS not found. Debian 13 installs it as "
+                "/usr/share/vgabios/vgabios.bin. Run: "
                 "sudo apt update && sudo apt install -y vgabios"
             )
         lines.append(f"romimage: file={bochs_quote(bios)}")
@@ -323,8 +323,8 @@ class VMManager:
         vga_bios = self._find_bios("VGABIOS-lgpl-latest")
         if not vga_bios:
             raise VMError(
-                "Bochs VGA BIOS was not found. Debian's Bochs package normally places it at "
-                "/usr/share/bochs/VGABIOS-lgpl-latest (without .bin). Run: "
+                "Bochs VGA BIOS was not found. Debian 13's vgabios package installs "
+                "/usr/share/vgabios/vgabios.bin. Run: "
                 "sudo apt update && sudo apt install -y vgabios"
             )
         if not cfg.disk_path or not Path(cfg.disk_path).is_file():
@@ -333,8 +333,15 @@ class VMManager:
         log = self.vm_path(name) / "logs/launcher.log"
         try:
             with log.open("ab") as output:
-                proc = subprocess.Popen([executable, "-q", "-f", str(config_file)],
-                                         cwd=self.vm_path(name), stdin=subprocess.DEVNULL,
+                # Bochs parses config-style command-line options after the
+                # -f file, so these explicit ROM settings override any stale
+                # system/default bochsrc and prevent BXSHARE's missing default
+                # VGABIOS-lgpl-latest.bin path from being used.
+                proc = subprocess.Popen([
+                    executable, "-q", "-f", str(config_file),
+                    f"romimage: file={bochs_quote(system_bios)}",
+                    f"vgaromimage: file={bochs_quote(vga_bios)}",
+                ], cwd=self.vm_path(name), stdin=subprocess.DEVNULL,
                                          stdout=output, stderr=subprocess.STDOUT,
                                          start_new_session=True, close_fds=True)
         except OSError as exc:
