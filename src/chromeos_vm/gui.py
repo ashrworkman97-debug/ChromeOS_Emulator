@@ -24,48 +24,154 @@ class ChromeOSVMStudio:
         # checks so launching the app does not contact GitHub every time.
         self.root.after(1800, lambda: self.check_updates(manual=False))
 
+    def _configure_style(self) -> None:
+        """Use a consistent, modern desktop palette with ttk's native widgets."""
+        self.root.configure(background="#eef2f7")
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        style.configure("App.TFrame", background="#eef2f7")
+        style.configure("Hero.TFrame", background="#17243a")
+        style.configure("HeroTitle.TLabel", background="#17243a", foreground="#ffffff",
+                        font=("TkDefaultFont", 21, "bold"))
+        style.configure("HeroSubtitle.TLabel", background="#17243a", foreground="#cbd5e1",
+                        font=("TkDefaultFont", 10))
+        style.configure("HeroBadge.TLabel", background="#263a59", foreground="#a5f3fc",
+                        padding=(10, 5), font=("TkDefaultFont", 9, "bold"))
+        style.configure("Panel.TFrame", background="#ffffff")
+        style.configure("PanelTitle.TLabel", background="#ffffff", foreground="#17243a",
+                        font=("TkDefaultFont", 11, "bold"))
+        style.configure("PanelHint.TLabel", background="#ffffff", foreground="#64748b",
+                        font=("TkDefaultFont", 9))
+        style.configure("App.TLabel", background="#eef2f7", foreground="#334155",
+                        font=("TkDefaultFont", 9))
+        style.configure("Status.TLabel", background="#e0f2fe", foreground="#075985",
+                        padding=(12, 9), font=("TkDefaultFont", 9, "bold"))
+        style.configure("Primary.TButton", background="#2563eb", foreground="#ffffff",
+                        padding=(12, 9), font=("TkDefaultFont", 9, "bold"), borderwidth=0)
+        style.map("Primary.TButton",
+                  background=[("active", "#1d4ed8"), ("disabled", "#94a3b8")],
+                  foreground=[("disabled", "#e2e8f0")])
+        style.configure("Accent.TButton", background="#0f766e", foreground="#ffffff",
+                        padding=(12, 8), font=("TkDefaultFont", 9, "bold"), borderwidth=0)
+        style.map("Accent.TButton", background=[("active", "#115e59")])
+        style.configure("Action.TButton", background="#f1f5f9", foreground="#1e293b",
+                        padding=(10, 8), borderwidth=0)
+        style.map("Action.TButton", background=[("active", "#e2e8f0")])
+        style.configure("Danger.TButton", background="#fff1f2", foreground="#be123c",
+                        padding=(10, 8), borderwidth=0)
+        style.map("Danger.TButton", background=[("active", "#ffe4e6")])
+        style.configure("Treeview", background="#ffffff", fieldbackground="#ffffff",
+                        foreground="#1e293b", rowheight=34, borderwidth=0,
+                        font=("TkDefaultFont", 10))
+        style.configure("Treeview.Heading", background="#f1f5f9", foreground="#475569",
+                        padding=(9, 9), font=("TkDefaultFont", 9, "bold"), relief="flat")
+        style.map("Treeview", background=[("selected", "#dbeafe")],
+                  foreground=[("selected", "#1d4ed8")])
+        style.configure("Vertical.TScrollbar", background="#e2e8f0",
+                        troughcolor="#f8fafc", borderwidth=0, arrowsize=12)
+
     def _build(self) -> None:
-        outer = ttk.Frame(self.root, padding=14)
+        self._configure_style()
+        outer = ttk.Frame(self.root, style="App.TFrame", padding=(20, 18, 20, 16))
         outer.pack(fill="both", expand=True)
-        header = ttk.Frame(outer)
-        header.pack(fill="x", pady=(0, 12))
-        ttk.Label(header, text="ChromeOS VM Studio", font=("TkDefaultFont", 18, "bold")).pack(anchor="w")
-        ttk.Label(header, text="Native PC emulation for ChromeOS Linux · Powered by Bochs · No QEMU").pack(anchor="w", pady=(3, 0))
+
+        # Dark title banner gives the app a clear identity without relying on
+        # external icon/font packages that may not be installed in Crostini.
+        hero = ttk.Frame(outer, style="Hero.TFrame", padding=(20, 17))
+        hero.pack(fill="x", pady=(0, 16))
+        hero_left = ttk.Frame(hero, style="Hero.TFrame")
+        hero_left.pack(side="left", fill="x", expand=True)
+        ttk.Label(hero_left, text="▣  CHROMEOS VM STUDIO",
+                  style="HeroTitle.TLabel").pack(anchor="w")
+        ttk.Label(hero_left,
+                  text="Your virtual PCs, all in one place  ·  Native Crostini app",
+                  style="HeroSubtitle.TLabel").pack(anchor="w", pady=(5, 0))
+        ttk.Label(hero, text="BOCHS  •  X86 EMULATION",
+                  style="HeroBadge.TLabel").pack(side="right", anchor="center", padx=(12, 0))
+
+        section = ttk.Frame(outer, style="App.TFrame")
+        section.pack(fill="x", pady=(0, 8))
+        ttk.Label(section, text="VIRTUAL MACHINES",
+                  background="#eef2f7", foreground="#334155",
+                  font=("TkDefaultFont", 10, "bold")).pack(side="left")
+        ttk.Label(section, text="Select a machine to manage its power and media",
+                  style="App.TLabel").pack(side="right")
+
+        content = ttk.Frame(outer, style="App.TFrame")
+        content.pack(fill="both", expand=True)
+
+        list_panel = ttk.Frame(content, style="Panel.TFrame", padding=12)
+        list_panel.pack(side="left", fill="both", expand=True)
+        list_head = ttk.Frame(list_panel, style="Panel.TFrame")
+        list_head.pack(fill="x", pady=(0, 10))
+        ttk.Label(list_head, text="VM LIBRARY", style="PanelTitle.TLabel").pack(side="left")
+        ttk.Label(list_head, text="Double-click a VM to boot",
+                  style="PanelHint.TLabel").pack(side="right")
 
         columns = ("state", "ram", "disk", "media")
-        self.table = ttk.Treeview(outer, columns=columns, show="tree headings", selectmode="browse")
-        self.table.heading("#0", text="Virtual machine")
-        self.table.heading("state", text="State")
-        self.table.heading("ram", text="RAM")
-        self.table.heading("disk", text="Disk")
-        self.table.heading("media", text="Install media")
-        self.table.column("#0", width=200)
-        self.table.column("state", width=90, anchor="center")
-        self.table.column("ram", width=90, anchor="e")
-        self.table.column("disk", width=90, anchor="e")
-        self.table.column("media", width=260)
-        self.table.pack(fill="both", expand=True)
+        self.table = ttk.Treeview(
+            list_panel, columns=columns, show="tree headings",
+            selectmode="browse", height=10,
+        )
+        self.table.heading("#0", text="MACHINE")
+        self.table.heading("state", text="STATUS")
+        self.table.heading("ram", text="MEMORY")
+        self.table.heading("disk", text="DISK")
+        self.table.heading("media", text="INSTALL MEDIA")
+        self.table.column("#0", width=190, minwidth=130)
+        self.table.column("state", width=86, minwidth=78, anchor="center")
+        self.table.column("ram", width=94, minwidth=80, anchor="center")
+        self.table.column("disk", width=88, minwidth=76, anchor="center")
+        self.table.column("media", width=190, minwidth=110)
+        scrollbar = ttk.Scrollbar(list_panel, orient="vertical", command=self.table.yview)
+        self.table.configure(yscrollcommand=scrollbar.set)
+        self.table.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.table.tag_configure("running", foreground="#0f766e")
+        self.table.tag_configure("stopped", foreground="#64748b")
+        self.table.bind("<Double-1>", lambda _event: self.start_vm())
 
-        bar = ttk.Frame(outer)
-        bar.pack(fill="x", pady=(12, 6))
-        actions = [
-            ("New VM", self.new_vm),
-            ("Boot", self.start_vm),
-            ("Stop", self.stop_vm),
-            ("Attach ISO", self.attach_iso),
-            ("Open folder", self.open_folder),
-            ("Logs", self.show_logs),
-            ("Delete", self.delete_vm),
-            ("Refresh", self.refresh),
-            ("Updates", self.check_updates),
-        ]
-        for label, callback in actions:
-            ttk.Button(bar, text=label, command=callback).pack(side="left", padx=(0, 5))
+        action_panel = ttk.Frame(content, style="Panel.TFrame", padding=13, width=190)
+        action_panel.pack(side="right", fill="y", padx=(12, 0))
+        action_panel.pack_propagate(False)
+        ttk.Label(action_panel, text="ACTIONS", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 10))
 
-        self.status = tk.StringVar(value="Ready. Create a VM, attach installation media, then boot it.")
-        ttk.Label(outer, textvariable=self.status, wraplength=780).pack(anchor="w", pady=(6, 0))
-        note = "Guests run in a separate Bochs window. Software emulation is CPU-intensive; older x86 systems are the best fit."
-        ttk.Label(outer, text=note, foreground="#666").pack(anchor="w", pady=(5, 0))
+        ttk.Button(action_panel, text="＋  New VM", style="Primary.TButton",
+                   command=self.new_vm).pack(fill="x", pady=(0, 7))
+        ttk.Button(action_panel, text="▶  Boot", style="Accent.TButton",
+                   command=self.start_vm).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="■  Stop", style="Action.TButton",
+                   command=self.stop_vm).pack(fill="x", pady=3)
+
+        ttk.Separator(action_panel).pack(fill="x", pady=10)
+        ttk.Label(action_panel, text="DEVICES & FILES",
+                  style="PanelHint.TLabel").pack(anchor="w", pady=(0, 5))
+        ttk.Button(action_panel, text="Attach ISO…", style="Action.TButton",
+                   command=self.attach_iso).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Open folder", style="Action.TButton",
+                   command=self.open_folder).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="View logs", style="Action.TButton",
+                   command=self.show_logs).pack(fill="x", pady=3)
+
+        ttk.Separator(action_panel).pack(fill="x", pady=10)
+        ttk.Button(action_panel, text="Refresh library", style="Action.TButton",
+                   command=self.refresh).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Check updates", style="Action.TButton",
+                   command=self.check_updates).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Delete VM", style="Danger.TButton",
+                   command=self.delete_vm).pack(fill="x", pady=(8, 3))
+
+        self.status = tk.StringVar(value="Ready  ·  Create a VM or select one from your library.")
+        ttk.Label(outer, textvariable=self.status, style="Status.TLabel",
+                  wraplength=900).pack(fill="x", pady=(13, 7))
+        note = ("Guests open in their own Bochs window. Software emulation uses CPU; "
+                "older DOS and Windows guests are the best fit for Chromebook hardware.")
+        ttk.Label(outer, text=note, style="App.TLabel",
+                  wraplength=920).pack(anchor="w")
         self.root.after(1200, self._poll)
 
     def check_updates(self, manual: bool = True) -> None:
