@@ -1,4 +1,4 @@
-"""Command-line interface."""
+"""Command-line maintenance interface for ChromeOS VM Studio."""
 from __future__ import annotations
 import argparse
 import sys
@@ -9,29 +9,21 @@ from .manager import VMError, VMManager
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chromeos-vm",
-        description="Create and manage crosvm virtual machines without QEMU.")
+        description="Manage native Bochs PC emulators on ChromeOS Linux (Crostini).")
     parser.add_argument("--home", type=Path, help="VM storage directory")
     parser.add_argument("--version", action="version", version=f"ChromeOS VM Studio {__version__}")
     cmds = parser.add_subparsers(dest="command", required=True)
-    cmds.add_parser("check", help="check host crosvm/KVM readiness")
-    create = cmds.add_parser("create", help="create a VM and sparse raw disk")
+    cmds.add_parser("check", help="check Crostini and Bochs readiness")
+    create = cmds.add_parser("create", help="create a VM profile and sparse raw disk")
     create.add_argument("name")
-    create.add_argument("--memory-mib", type=int, default=4096)
-    create.add_argument("--cpus", type=int, default=2)
-    create.add_argument("--disk-gib", type=int, default=32)
-    create.add_argument("--kernel", type=Path)
-    configure = cmds.add_parser("configure", help="configure guest kernel")
-    configure.add_argument("name")
-    configure.add_argument("--kernel", type=Path, required=True)
-    cmds.add_parser("list", help="list VMs")
-    info = cmds.add_parser("info", help="show VM details")
-    info.add_argument("name")
-    start = cmds.add_parser("start", help="start VM with crosvm")
-    start.add_argument("name")
-    start.add_argument("--crosvm")
-    stop = cmds.add_parser("stop", help="request orderly crosvm shutdown")
-    stop.add_argument("name")
-    stop.add_argument("--crosvm")
+    create.add_argument("--memory-mib", type=int, default=512)
+    create.add_argument("--disk-gib", type=int, default=8)
+    create.add_argument("--cpu-ips", type=int, default=10_000_000)
+    create.add_argument("--iso", type=Path)
+    for command in ("start", "stop", "info"):
+        sub = cmds.add_parser(command)
+        sub.add_argument("name")
+    cmds.add_parser("list", help="list virtual machines")
     delete = cmds.add_parser("delete", help="delete a stopped VM and its disk")
     delete.add_argument("name")
     delete.add_argument("--yes", action="store_true")
@@ -43,40 +35,32 @@ def main(argv: list[str] | None = None) -> int:
     manager = VMManager(args.home)
     try:
         if args.command == "check":
-            e = manager.environment()
-            print(f"Host: {e['platform']} / {e['architecture']}")
-            print(f"crosvm: {e['crosvm'] or 'not found'}")
-            print(f"/dev/kvm: {'present' if e['kvm_device'] else 'missing'}")
-            ready = e['platform'] == 'Linux' and e['crosvm'] and e['kvm_device'] and e['kvm_readable'] and e['kvm_writable']
-            print("Result: ready" if ready else "Result: not ready to start VMs")
-            if not ready:
-                print("This release requires Linux, crosvm, and readable/writable /dev/kvm.")
+            bochs = manager.find_bochs()
+            print(f"Host: {sys.platform}")
+            print(f"Bochs: {bochs or 'not installed'}")
+            print(f"Tkinter: {'available' if _tk_available() else 'not installed'}")
+            print("ChromeOS Linux integration: use the Linux development environment (Crostini).")
+            ready = bool(bochs and _tk_available())
+            print("Result: ready" if ready else "Result: install missing desktop packages.")
             return 0 if ready else 1
         if args.command == "create":
-            c = manager.create(args.name, args.memory_mib, args.cpus, args.disk_gib, args.kernel)
-            print(f"Created {c.name}: {c.memory_mib} MiB RAM, {c.cpus} CPUs, {c.disk_gib} GiB sparse raw disk.")
-            if not c.kernel_path:
-                print(f"Configure a kernel: chromeos-vm configure {c.name} --kernel PATH")
-        elif args.command == "configure":
-            c = manager.set_kernel(args.name, args.kernel)
-            print(f"Configured kernel for {c.name}: {c.kernel_path}")
+            cfg = manager.create(args.name, args.memory_mib, args.disk_gib, args.cpu_ips, args.iso)
+            print(f"Created {cfg.name} with a {cfg.disk_gib} GiB sparse disk.")
         elif args.command == "list":
-            configs = manager.list_vms()
-            if not configs:
-                print("No VMs yet.")
-            for c in configs:
-                print(f"{c.name}: {'running' if manager.is_running(c.name) else 'stopped'}, {c.cpus} CPUs, {c.memory_mib} MiB, {c.disk_gib} GiB")
+            for cfg in manager.list_vms():
+                status = "running" if manager.is_running(cfg.name) else "stopped"
+                print(f"{cfg.name}: {status}, {cfg.memory_mib} MiB RAM, {cfg.disk_gib} GiB disk")
         elif args.command == "info":
-            c = manager.load(args.name)
-            print(f"Name: {c.name}\nState: {'running' if manager.is_running(c.name) else 'stopped'}\nBackend: {c.backend}\nMemory: {c.memory_mib} MiB\nCPUs: {c.cpus}\nDisk: {c.disk_path}\nKernel: {c.kernel_path or 'not configured'}\nLog: {manager.vm_path(c.name) / 'logs/crosvm.log'}")
+            cfg = manager.load(args.name)
+            print(f"Name: {cfg.name}\nBackend: {cfg.backend}\nState: {'running' if manager.is_running(cfg.name) else 'stopped'}\nRAM: {cfg.memory_mib} MiB\nDisk: {cfg.disk_path}\nISO: {cfg.iso_path or 'not attached'}\nConfig: {manager.vm_path(cfg.name) / 'bochsrc'}")
         elif args.command == "start":
-            print(f"Started {args.name}, crosvm PID {manager.start(args.name, args.crosvm)}")
+            print(f"Started {args.name}; Bochs PID {manager.start(args.name)}")
         elif args.command == "stop":
-            manager.stop(args.name, args.crosvm)
-            print(f"Sent orderly stop request to {args.name}.")
+            manager.stop(args.name)
+            print(f"Stopped {args.name}.")
         elif args.command == "delete":
             manager.load(args.name)
-            if not args.yes and input(f"Permanently delete {args.name} and its disk? [y/N] ").strip().lower() not in {"y", "yes"}:
+            if not args.yes and input(f"Permanently delete {args.name} and its virtual disk? [y/N] ").strip().lower() not in {"y", "yes"}:
                 print("Cancelled.")
                 return 0
             manager.delete(args.name)
@@ -85,6 +69,14 @@ def main(argv: list[str] | None = None) -> int:
     except (VMError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
+
+
+def _tk_available() -> bool:
+    try:
+        import tkinter  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 if __name__ == "__main__":
