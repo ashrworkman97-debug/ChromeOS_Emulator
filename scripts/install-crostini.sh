@@ -4,6 +4,7 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$HOME/.local/opt/chromeos-vm-studio"
 DESKTOP_DIR="$HOME/.local/share/applications"
+BIN_DIR="$HOME/.local/bin"
 
 if ! command -v apt-get >/dev/null 2>&1; then
   echo "This installer targets Debian-based Crostini containers." >&2
@@ -14,9 +15,11 @@ echo "Installing Bochs and native desktop dependencies..."
 sudo apt-get update
 sudo apt-get install -y bochs bochs-sdl bochsbios vgabios python3-tk python3-venv python3-setuptools
 
-mkdir -p "$APP_DIR" "$DESKTOP_DIR"
+mkdir -p "$APP_DIR" "$DESKTOP_DIR" "$BIN_DIR"
 python3 -m venv --system-site-packages "$APP_DIR/venv"
 "$APP_DIR/venv/bin/python" -m pip install --no-deps --no-build-isolation "$PROJECT_DIR"
+ln -sf "$APP_DIR/venv/bin/chromeos-vm" "$BIN_DIR/chromeos-vm"
+ln -sf "$APP_DIR/venv/bin/chromeos-vm-update" "$BIN_DIR/chromeos-vm-update"
 
 # Record the source revision so the built-in updater knows which commit is installed.
 COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || true)"
