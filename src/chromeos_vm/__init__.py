@@ -1,2 +1,2 @@
-"""ChromeOS VM Studio: a crosvm-based virtual machine manager."""
-__version__ = "0.1.0"
+"""ChromeOS VM Studio: a native Crostini desktop VM manager powered by Bochs."""
+__version__ = "0.2.0"
