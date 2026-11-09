@@ -24,7 +24,9 @@ Emulated x86 PC (CPU, BIOS, VGA, IDE, CD-ROM, input)
 Guest OS installed from user-provided media
 ```
 
-The updater lives in the installed Python package and runs a background check on app launch (12-hour cooldown). It queries this repository's `main` commit, downloads a bounded GitHub archive, rejects traversal and link entries, stages only regular files, and calls the current venv's `pip` to install the package. Installed commit metadata is stored in `~/.local/opt/chromeos-vm-studio/install.json`. It does not touch VM data. The GUI prompts for restart after installation; each guest remains its own Bochs process. A manual check is available with the Updates button or `chromeos-vm update --force`.\n\nThe manager owns `~/.local/share/chromeos-vm-studio/<vm-name>`:
+The updater lives in the installed Python package and runs a background check on app launch (12-hour cooldown). It queries this repository's `main` commit, downloads a bounded GitHub archive, rejects traversal and link entries, stages only regular files, and calls the current venv's `pip` to install the package. Installed commit metadata is stored in `~/.local/opt/chromeos-vm-studio/install.json`. It does not touch VM data. The GUI prompts for restart after installation; each guest remains its own Bochs process. A manual check is available with the Updates button or `chromeos-vm update --force`.
+
+The manager owns `~/.local/share/chromeos-vm-studio/<vm-name>`:
 - `vm.json`: versioned VM profile
 - `disk.raw`: sparse virtual hard disk
 - `bochsrc`: generated Bochs configuration
