@@ -192,11 +192,12 @@ class ChromeOSVMStudio:
             except tk.TclError:
                 pass  # The user closed the window while the check was running.
 
+        # Keep network access and pip installation off Tk's event thread.
+        threading.Thread(target=worker, name="vm-studio-updater", daemon=True).start()
+
     def _finish_update_check(self, result: UpdateResult, manual: bool) -> None:
         self._update_check_active = False
         self._show_update_result(result, manual)
-
-        threading.Thread(target=worker, name="vm-studio-updater", daemon=True).start()
 
     def _show_update_result(self, result: UpdateResult, manual: bool) -> None:
         if result.status == "updated":
