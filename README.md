@@ -99,13 +99,13 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 
 ## Roadmap
 
-1. Native Crostini desktop manager, VM profiles, sparse raw disks, ISO attach, Bochs launch/stop, logs, and safe deletion. (Initial foundation.)
-2. Improve configuration wizard (machine family, CPU, display, memory, IDE/ATA, removable media).
-3. Guest lifecycle controls, safe stop and power-off handling, more detailed status/log diagnostics.
-4. Save-state/snapshot support only if the chosen backend exposes a reliable supported interface.
+1. Native Crostini desktop manager, VM library, sparse raw disks, Bochs GUI launch/stop, logs, ISO selection/ejection, editable RAM/CPU settings, and confirmed deletion. (Implemented; CI GUI smoke-tested.)
+2. Extend hardware configuration (machine family, CPU model, display, IDE/ATA device choices, and removable-media behavior).
+3. Improve lifecycle handling, guest shutdown guidance, status diagnostics, and configuration validation.
+4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
 5. Storage import/export, clone, backup, and disk resizing with safeguards.
-6. Evaluate optional accelerated non-QEMU KVM backend for supported hosts and guests.
-7. Reproducible guest boot tests on representative Chromebook hardware and packaging polish.
+6. Evaluate an optional accelerated non-QEMU KVM backend only for compatible guests on hosts that actually expose nested KVM.
+7. Reproducible end-to-end guest boot tests on representative Chromebook hardware and packaging polish.
 
 A milestone is not complete just because a command or UI control exists: tests and actual guest boot verification are required before support is claimed.
 
