@@ -6,7 +6,8 @@
 | App UI | Native Linux GUI app (Tkinter); no browser UI |
 | Emulator | Bochs full-PC x86 software emulation |
 | QEMU | Not used |
-| KVM | Not required for Bochs |\n| Updates | Background commit-based updater from this repository's `main` branch |
+| KVM | Not required for Bochs |
+| Updates | Background commit-based updater from this repository's `main` branch |
 | Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
 | Guest display | Bochs's own GUI window |
 
