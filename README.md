@@ -101,7 +101,7 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 
 1. Native Crostini desktop manager, VM library, sparse raw disks, Bochs GUI launch/stop, logs, ISO selection/ejection, editable RAM/CPU settings, and confirmed deletion. (Implemented; CI GUI smoke-tested.)
 2. Extend hardware configuration (machine family, CPU model, display, IDE/ATA device choices, and removable-media behavior).
-3. Improve lifecycle handling, guest shutdown guidance, status diagnostics, and configuration validation.
+3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, and stale-marker cleanup. (Implemented and tested.) Remaining: guest shutdown guidance, richer status diagnostics, and configuration validation.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
 5. Storage import/export, clone, backup, and disk resizing with safeguards.
 6. Evaluate an optional accelerated non-QEMU KVM backend only for compatible guests on hosts that actually expose nested KVM.
