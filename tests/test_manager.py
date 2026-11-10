@@ -212,10 +212,10 @@ class ManagerTests(unittest.TestCase):
         fake = self.root / "fake-bochs"
         args_file = self.root / "bochs-args.txt"
         fake.write_text(
-            f"#!{sys.executable}\\n"
-            "import pathlib, sys, time\\n"
-            f"pathlib.Path({str(args_file)!r}).write_text(chr(10).join(sys.argv[1:]) + chr(10))\\n"
-            "time.sleep(30)\\n"
+            f"#!{sys.executable}\n"
+            "import pathlib, sys, time\n"
+            f"pathlib.Path({str(args_file)!r}).write_text(chr(10).join(sys.argv[1:]) + chr(10))\n"
+            "time.sleep(30)\n"
         )
         fake.chmod(0o755)
         with patch.object(self.manager, "_find_bios",
