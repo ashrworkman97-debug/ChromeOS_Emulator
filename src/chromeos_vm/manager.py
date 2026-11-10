@@ -322,6 +322,14 @@ class VMManager:
         except OSError:
             return []
 
+    @staticmethod
+    def _reap_child(pid: int) -> None:
+        """Reap an exited child if this process still owns it."""
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            pass
+
     def _write_pid_record(self, name: str, pid: int, start_ticks: int,
                           config_file: Path) -> None:
         path = self.vm_path(name) / "runtime/bochs.pid"
@@ -365,8 +373,15 @@ class VMManager:
 
         current_start = self._process_start_ticks(pid)
         argv = self._process_cmdline(pid)
-        if (current_start is None or not argv or
-                "-f" not in argv or str(config_file) not in argv or
+        if current_start is None or not argv:
+            # If this was a process started by this manager, reap its zombie
+            # instead of leaving it behind after the user closes Bochs.
+            if recorded_start is not None and (
+                    current_start is None or current_start == recorded_start):
+                self._reap_child(pid)
+            pid_file.unlink(missing_ok=True)
+            return None
+        if ("-f" not in argv or str(config_file) not in argv or
                 (recorded_start is not None and current_start != recorded_start)):
             pid_file.unlink(missing_ok=True)
             return None
@@ -401,42 +416,47 @@ class VMManager:
             raise VMError("The VM's virtual disk is missing.")
         config_file = self.write_bochsrc(cfg).resolve()
         log = self.vm_path(name) / "logs/launcher.log"
+        argv = [
+            executable, "-q", "-f", str(config_file),
+            f"romimage: file={bochs_quote(system_bios)}",
+            f"vgaromimage: file={bochs_quote(vga_bios)}",
+        ]
         try:
             with log.open("ab") as output:
-                # Bochs parses config-style command-line options after the
-                # -f file, so these explicit ROM settings override any stale
-                # system/default bochsrc and prevent BXSHARE's missing default
-                # VGABIOS-lgpl-latest.bin path from being used.
-                proc = subprocess.Popen([
-                    executable, "-q", "-f", str(config_file),
-                    f"romimage: file={bochs_quote(system_bios)}",
-                    f"vgaromimage: file={bochs_quote(vga_bios)}",
-                ], cwd=self.vm_path(name), stdin=subprocess.DEVNULL,
-                                         stdout=output, stderr=subprocess.STDOUT,
-                                         start_new_session=True, close_fds=True)
-        except OSError as exc:
+                # Use posix_spawn rather than leaving a Popen object behind for
+                # a long-lived GUI process. The child inherits only its log
+                # streams and /dev/null stdin, and starts in its own session.
+                actions = [
+                    (os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
+                    (os.POSIX_SPAWN_DUP2, output.fileno(), 1),
+                    (os.POSIX_SPAWN_DUP2, output.fileno(), 2),
+                    (os.POSIX_SPAWN_CLOSE, output.fileno()),
+                ]
+                pid = os.posix_spawn(
+                    executable, argv, os.environ.copy(),
+                    file_actions=actions, setsid=True,
+                )
+        except (AttributeError, OSError) as exc:
             raise VMError(f"Could not launch Bochs: {exc}") from exc
-        start_ticks = self._process_start_ticks(proc.pid)
-        argv = self._process_cmdline(proc.pid)
-        if (start_ticks is None or "-f" not in argv or str(config_file) not in argv):
-            proc.terminate()
+        start_ticks = self._process_start_ticks(pid)
+        live_argv = self._process_cmdline(pid)
+        if (start_ticks is None or "-f" not in live_argv or str(config_file) not in live_argv):
             try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=3)
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            self._reap_child(pid)
             raise VMError("Could not verify the launched Bochs process identity; it was stopped for safety.")
         try:
-            self._write_pid_record(name, proc.pid, start_ticks, config_file)
+            self._write_pid_record(name, pid, start_ticks, config_file)
         except OSError as exc:
-            proc.terminate()
             try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=3)
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            self._reap_child(pid)
             raise VMError(f"Could not record the Bochs process identity: {exc}") from exc
-        return proc.pid
+        return pid
 
     def stop(self, name: str) -> None:
         pid_file = self.vm_path(name) / "runtime/bochs.pid"
