@@ -317,7 +317,7 @@ class VMManager:
     def _process_cmdline(pid: int) -> list[str]:
         try:
             return [os.fsdecode(part) for part in
-                    Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\\0") if part]
+                    Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0") if part]
         except OSError:
             return []
 
@@ -329,7 +329,7 @@ class VMManager:
             "pid": pid,
             "start_ticks": start_ticks,
             "config": str(config_file.resolve()),
-        }) + "\\n", encoding="utf-8")
+        }) + "\n", encoding="utf-8")
         temporary.replace(path)
 
     def _running_pid(self, name: str) -> int | None:
@@ -438,6 +438,7 @@ class VMManager:
         return proc.pid
 
     def stop(self, name: str) -> None:
+        pid_file = self.vm_path(name) / "runtime/bochs.pid"
         pid = self._running_pid(name)
         if pid is None:
             raise VMError(f"VM '{name}' is not running.")
