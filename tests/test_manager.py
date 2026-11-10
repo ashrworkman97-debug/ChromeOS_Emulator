@@ -92,6 +92,10 @@ class ManagerTests(unittest.TestCase):
         self.assertIn(f"cylinders={cylinders}, heads={heads}, spt={sectors}", config)
         self.assertIn("ata0-master: type=disk", config)
         self.assertIn("boot: disk", config)
+        self.assertIn(
+            f'log: "{(self.manager.vm_path(cfg.name) / "logs/bochs.log").resolve()}"',
+            config,
+        )
         self.assertNotIn("qemu", config.lower())
 
     def test_finds_debian_trixie_vga_rom_from_vgabios_package_manifest(self):
