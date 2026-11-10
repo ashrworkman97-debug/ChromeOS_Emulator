@@ -46,6 +46,8 @@ crosvm is a VMM using Linux KVM and virtio devices, not a general PC chipset emu
 
 - Never pass untrusted path text through a shell.
 - Do not accept newlines or quote injection in generated configuration paths.
+- Track emulator PID, Linux process start time, and the exact VM config path; migrate legacy PID-only markers only when `/proc` confirms the matching command line.
+- Use Linux pidfds for stop signals when available, with a final process-identity check on older kernels, so PID reuse cannot redirect a stop request to an unrelated process.
 - Never delete a VM disk while its emulator is running.
 - Ask for explicit confirmation before permanent disk deletion.
 - Do not bundle proprietary guest installation media or ROM/BIOS dumps.
