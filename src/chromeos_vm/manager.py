@@ -277,7 +277,7 @@ class VMManager:
         else:
             lines.append("boot: disk")
         lines.extend([
-            "log: " + bochs_quote(self.vm_path(cfg.name) / "logs/bochs.log"),
+            "log: " + bochs_quote((self.vm_path(cfg.name) / "logs/bochs.log").resolve()),
             "panic: action=ask",
             "error: action=report",
             "info: action=report",
