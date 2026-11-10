@@ -4,6 +4,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from chromeos_vm import updater
@@ -59,6 +60,23 @@ class SafeExtractTests(unittest.TestCase):
 
 
 class UpdateFlowTests(unittest.TestCase):
+    def test_automatic_check_obeys_twelve_hour_cooldown(self):
+        sha = "e" * 40
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / "install.json"
+            marker.write_text(json.dumps({
+                "commit": sha,
+                "last_check": datetime.now(timezone.utc).isoformat(),
+            }))
+            with patch.object(updater, "metadata_path", return_value=marker), \\
+                 patch.object(updater, "latest_commit") as latest, \\
+                 patch.object(updater, "apply_update") as apply:
+                result = updater.check_for_updates(force=False)
+            self.assertEqual(result.status, "current")
+            self.assertIn("performed recently", result.message)
+            latest.assert_not_called()
+            apply.assert_not_called()
+
     def test_installs_commit_then_records_marker(self):
         sha = "a" * 40
         with tempfile.TemporaryDirectory() as temp:
