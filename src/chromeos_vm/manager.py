@@ -302,30 +302,82 @@ class VMManager:
         candidate = override or shutil.which("bochs")
         return str(Path(candidate).expanduser().resolve()) if candidate and Path(candidate).is_file() else None
 
-    def is_running(self, name: str) -> bool:
+    @staticmethod
+    def _process_start_ticks(pid: int) -> int | None:
+        """Read Linux /proc starttime (stat field 22), robust to spaces in comm."""
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+            fields = stat[stat.rfind(")") + 1:].split()
+            # The suffix begins at field 3 (state); starttime is field 22.
+            return int(fields[19])
+        except (OSError, ValueError, IndexError):
+            return None
+
+    @staticmethod
+    def _process_cmdline(pid: int) -> list[str]:
+        try:
+            return [os.fsdecode(part) for part in
+                    Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\\0") if part]
+        except OSError:
+            return []
+
+    def _write_pid_record(self, name: str, pid: int, start_ticks: int,
+                          config_file: Path) -> None:
+        path = self.vm_path(name) / "runtime/bochs.pid"
+        temporary = path.with_suffix(".pid.tmp")
+        temporary.write_text(json.dumps({
+            "pid": pid,
+            "start_ticks": start_ticks,
+            "config": str(config_file.resolve()),
+        }) + "\\n", encoding="utf-8")
+        temporary.replace(path)
+
+    def _running_pid(self, name: str) -> int | None:
         self.load(name)
         pid_file = self.vm_path(name) / "runtime/bochs.pid"
+        config_file = (self.vm_path(name) / "bochsrc").resolve()
         try:
-            pid = int(pid_file.read_text(encoding="ascii").strip())
-        except (OSError, ValueError):
-            return False
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            pid_file.unlink(missing_ok=True)
-            return False
-        except PermissionError:
-            return True
-        # Linux reports a terminated-but-not-yet-reaped child as state Z.
-        stat_file = Path(f"/proc/{pid}/stat")
-        try:
-            fields = stat_file.read_text(encoding="ascii").split()
-            if len(fields) > 2 and fields[2] == "Z":
-                pid_file.unlink(missing_ok=True)
-                return False
+            raw = pid_file.read_text(encoding="utf-8").strip()
         except OSError:
-            pass
-        return True
+            return None
+
+        # Older releases wrote only a PID. Never trust that number on its own:
+        # migrate it only if the live command line still names this VM's exact
+        # Bochs config file. Otherwise it could refer to an unrelated process
+        # after PID reuse.
+        try:
+            if raw.startswith("{"):
+                record = json.loads(raw)
+                pid = record["pid"]
+                recorded_start = record["start_ticks"]
+                recorded_config = record["config"]
+                if (type(pid) is not int or pid <= 1 or
+                        type(recorded_start) is not int or recorded_start <= 0 or
+                        recorded_config != str(config_file)):
+                    raise ValueError("invalid process identity")
+            else:
+                pid = int(raw)
+                recorded_start = None
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            pid_file.unlink(missing_ok=True)
+            return None
+
+        current_start = self._process_start_ticks(pid)
+        argv = self._process_cmdline(pid)
+        if (current_start is None or not argv or
+                "-f" not in argv or str(config_file) not in argv or
+                (recorded_start is not None and current_start != recorded_start)):
+            pid_file.unlink(missing_ok=True)
+            return None
+
+        if recorded_start is None:
+            # Upgrade a legacy PID marker only after verifying both the config
+            # argument and the kernel process start time.
+            self._write_pid_record(name, pid, current_start, config_file)
+        return pid
+
+    def is_running(self, name: str) -> bool:
+        return self._running_pid(name) is not None
 
     def start(self, name: str, bochs_override: str | None = None) -> int:
         cfg = self.load(name)
@@ -346,7 +398,7 @@ class VMManager:
             )
         if not cfg.disk_path or not Path(cfg.disk_path).is_file():
             raise VMError("The VM's virtual disk is missing.")
-        config_file = self.write_bochsrc(cfg)
+        config_file = self.write_bochsrc(cfg).resolve()
         log = self.vm_path(name) / "logs/launcher.log"
         try:
             with log.open("ab") as output:
@@ -363,15 +415,32 @@ class VMManager:
                                          start_new_session=True, close_fds=True)
         except OSError as exc:
             raise VMError(f"Could not launch Bochs: {exc}") from exc
-        (self.vm_path(name) / "runtime/bochs.pid").write_text(f"{proc.pid}\n", encoding="ascii")
+        start_ticks = self._process_start_ticks(proc.pid)
+        argv = self._process_cmdline(proc.pid)
+        if (start_ticks is None or "-f" not in argv or str(config_file) not in argv):
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
+            raise VMError("Could not verify the launched Bochs process identity; it was stopped for safety.")
+        try:
+            self._write_pid_record(name, proc.pid, start_ticks, config_file)
+        except OSError as exc:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
+            raise VMError(f"Could not record the Bochs process identity: {exc}") from exc
         return proc.pid
 
     def stop(self, name: str) -> None:
-        self.load(name)
-        pid_file = self.vm_path(name) / "runtime/bochs.pid"
-        if not self.is_running(name):
+        pid = self._running_pid(name)
+        if pid is None:
             raise VMError(f"VM '{name}' is not running.")
-        pid = int(pid_file.read_text(encoding="ascii").strip())
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
