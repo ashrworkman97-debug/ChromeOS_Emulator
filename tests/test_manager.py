@@ -1,5 +1,6 @@
 import os
-import shlex
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -51,6 +52,30 @@ class ManagerTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         self.manager = VMManager(self.root / "vms")
+
+    def _spawn_marked_process(self, name):
+        config_file = (self.manager.vm_path(name) / "bochsrc").resolve()
+        process = subprocess.Popen([
+            sys.executable, "-c", "import time; time.sleep(30)",
+            "-f", str(config_file),
+        ])
+        self.addCleanup(self._stop_process, process)
+        deadline = time.monotonic() + 2
+        while self.manager._process_start_ticks(process.pid) is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        ticks = self.manager._process_start_ticks(process.pid)
+        self.assertIsNotNone(ticks, "test process did not appear in /proc")
+        return process, config_file, ticks
+
+    @staticmethod
+    def _stop_process(process):
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
 
     def test_create_sparse_disk_and_bochsrc(self):
         cfg = self.manager.create("retro-pc", 512, 1, 10_000_000)
@@ -132,7 +157,8 @@ class ManagerTests(unittest.TestCase):
 
     def test_update_profile_rejects_running_vm(self):
         cfg = self.manager.create("editing-running")
-        (self.manager.vm_path(cfg.name) / "runtime/bochs.pid").write_text(str(os.getpid()))
+        process, config_file, ticks = self._spawn_marked_process(cfg.name)
+        self.manager._write_pid_record(cfg.name, process.pid, ticks, config_file)
         with self.assertRaisesRegex(VMError, "Stop the VM"):
             self.manager.update_profile(cfg.name, 512, 10_000_000, None)
 
@@ -149,19 +175,47 @@ class ManagerTests(unittest.TestCase):
 
     def test_running_vm_protected_from_deletion(self):
         cfg = self.manager.create("running")
-        runtime = self.manager.vm_path(cfg.name) / "runtime/bochs.pid"
-        runtime.write_text(str(os.getpid()))
+        process, config_file, ticks = self._spawn_marked_process(cfg.name)
+        self.manager._write_pid_record(cfg.name, process.pid, ticks, config_file)
         with self.assertRaises(VMError):
             self.manager.delete(cfg.name)
+
+    def test_legacy_pid_marker_migrates_only_for_matching_bochs_command(self):
+        cfg = self.manager.create("legacy-pid")
+        process, config_file, _ticks = self._spawn_marked_process(cfg.name)
+        pid_file = self.manager.vm_path(cfg.name) / "runtime/bochs.pid"
+        pid_file.write_text(str(process.pid), encoding="ascii")
+        self.assertTrue(self.manager.is_running(cfg.name))
+        record = __import__("json").loads(pid_file.read_text(encoding="utf-8"))
+        self.assertEqual(record["pid"], process.pid)
+        self.assertEqual(record["config"], str(config_file))
+
+    def test_legacy_pid_marker_does_not_adopt_or_signal_unrelated_process(self):
+        cfg = self.manager.create("unrelated-pid")
+        pid_file = self.manager.vm_path(cfg.name) / "runtime/bochs.pid"
+        pid_file.write_text(str(os.getpid()), encoding="ascii")
+        self.assertFalse(self.manager.is_running(cfg.name))
+        self.assertFalse(pid_file.exists())
+        # The test runner itself must remain alive; a stale PID is never killed.
+        os.kill(os.getpid(), 0)
+
+    def test_pid_start_time_mismatch_is_treated_as_reused_pid(self):
+        cfg = self.manager.create("reused-pid")
+        process, config_file, ticks = self._spawn_marked_process(cfg.name)
+        self.manager._write_pid_record(cfg.name, process.pid, ticks + 1, config_file)
+        self.assertFalse(self.manager.is_running(cfg.name))
+        self.assertFalse((self.manager.vm_path(cfg.name) / "runtime/bochs.pid").exists())
+        self.assertIsNone(process.poll())
 
     def test_mock_bochs_start_and_stop(self):
         self.manager.create("launch-test")
         fake = self.root / "fake-bochs"
         args_file = self.root / "bochs-args.txt"
         fake.write_text(
-            "#!/bin/sh\n"
-            "printf '%s\\n' \"$@\" > " + shlex.quote(str(args_file)) + "\n"
-            "exec /bin/sleep 30\n"
+            f"#!{sys.executable}\\n"
+            "import pathlib, sys, time\\n"
+            f"pathlib.Path({str(args_file)!r}).write_text(chr(10).join(sys.argv[1:]) + chr(10))\\n"
+            "time.sleep(30)\\n"
         )
         fake.chmod(0o755)
         with patch.object(self.manager, "_find_bios",
@@ -170,20 +224,29 @@ class ManagerTests(unittest.TestCase):
             pid = self.manager.start("launch-test", str(fake))
         self.assertGreater(pid, 0)
         deadline = time.monotonic() + 2
-        while not args_file.exists() and time.monotonic() < deadline:
+        launcher_log = self.manager.vm_path("launch-test") / "logs/launcher.log"
+        while not launcher_log.exists() or not args_file.exists():
+            if time.monotonic() >= deadline:
+                break
             time.sleep(0.02)
         self.assertTrue(args_file.exists(), "mock Bochs did not record its arguments")
         self.assertTrue(self.manager.is_running("launch-test"))
         self.assertEqual(
             args_file.read_text().splitlines(),
             [
-                "-q", "-f", str(self.manager.vm_path("launch-test") / "bochsrc"),
+                "-q", "-f", str((self.manager.vm_path("launch-test") / "bochsrc").resolve()),
                 'romimage: file="/mock/bochs-bios"',
                 'vgaromimage: file="/mock/vga-bios"',
             ],
         )
+        pid_record = __import__("json").loads(
+            (self.manager.vm_path("launch-test") / "runtime/bochs.pid").read_text()
+        )
+        self.assertEqual(pid_record["pid"], pid)
+        self.assertIsInstance(pid_record["start_ticks"], int)
         self.manager.stop("launch-test")
         self.assertFalse(self.manager.is_running("launch-test"))
+
 
 
 if __name__ == "__main__":
