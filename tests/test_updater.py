@@ -68,8 +68,8 @@ class UpdateFlowTests(unittest.TestCase):
                 "commit": sha,
                 "last_check": datetime.now(timezone.utc).isoformat(),
             }))
-            with patch.object(updater, "metadata_path", return_value=marker), \\
-                 patch.object(updater, "latest_commit") as latest, \\
+            with patch.object(updater, "metadata_path", return_value=marker), \
+                 patch.object(updater, "latest_commit") as latest, \
                  patch.object(updater, "apply_update") as apply:
                 result = updater.check_for_updates(force=False)
             self.assertEqual(result.status, "current")
