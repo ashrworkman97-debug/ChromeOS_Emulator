@@ -70,7 +70,7 @@ After that, future app updates are installed by the app itself. A network connec
 
 Open ChromeOS VM Studio, click **New VM**, choose a name, RAM amount, virtual hard-disk size, and (optionally) a user-provided ISO. Select the VM and click **Boot**. Bochs opens the guest's emulated PC in its own window. Install the guest OS onto the virtual hard disk as you would on a physical PC.
 
-You can attach another ISO later, open the VM's data folder, inspect logs, stop the emulator, or delete a VM. Deleting permanently removes its virtual disk and always requires a confirmation in the GUI.
+You can attach another ISO later, open the VM's data folder, inspect logs, stop the emulator, or delete a VM. Deleting permanently removes its virtual disk and always requires a confirmation in the GUI. The manager verifies the emulator's Linux process identity (including its start time and VM config path) before reporting it as running or sending a stop signal; stale PID files from older releases are migrated only when they still identify the matching Bochs command.
 
 CLI equivalents are also available:
 
