@@ -6,6 +6,7 @@ invokes QEMU.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -443,10 +444,46 @@ class VMManager:
         if pid is None:
             raise VMError(f"VM '{name}' is not running.")
         try:
-            os.kill(pid, signal.SIGTERM)
+            record = json.loads(pid_file.read_text(encoding="utf-8"))
+            expected_start = record["start_ticks"]
+            config_file = str((self.vm_path(name) / "bochsrc").resolve())
+            if record["pid"] != pid or record["config"] != config_file:
+                raise ValueError("process identity changed")
+            if hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"):
+                try:
+                    pidfd = os.pidfd_open(pid, 0)
+                except OSError as exc:
+                    if exc.errno not in {errno.ENOSYS, errno.EINVAL}:
+                        raise
+                    pidfd = None
+                if pidfd is not None:
+                    try:
+                        # A pidfd pins the process identity, preventing a PID
+                        # reuse race between verification and signal delivery.
+                        if (self._process_start_ticks(pid) != expected_start or
+                                str((self.vm_path(name) / "bochsrc").resolve())
+                                not in self._process_cmdline(pid)):
+                            raise VMError("Bochs process identity changed; refusing to signal an unrelated process.")
+                        signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+                    finally:
+                        os.close(pidfd)
+                else:
+                    if (self._process_start_ticks(pid) != expected_start or
+                            config_file not in self._process_cmdline(pid)):
+                        raise VMError("Bochs process identity changed; refusing to signal an unrelated process.")
+                    os.kill(pid, signal.SIGTERM)
+            else:
+                # Older Linux kernels without pidfds get a last-moment identity
+                # check before the traditional signal call.
+                if (self._process_start_ticks(pid) != expected_start or
+                        config_file not in self._process_cmdline(pid)):
+                    raise VMError("Bochs process identity changed; refusing to signal an unrelated process.")
+                os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pid_file.unlink(missing_ok=True)
             return
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise VMError(f"Could not safely stop Bochs: {exc}") from exc
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if not self.is_running(name):
