@@ -25,7 +25,7 @@ jobs:
       - name: Install Debian 13 packages used by Crostini
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends python3 bochs bochs-sdl bochsbios vgabios xvfb
+          apt-get install -y --no-install-recommends python3 bochs bochs-sdl bochsbios vgabios xvfb xauth
       - name: Verify real Debian package ROMs and generated Bochs configuration
         run: |
           PYTHONPATH=src python3 - <<'PY'
