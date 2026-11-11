@@ -218,6 +218,31 @@ class ManagerTests(unittest.TestCase):
         self.manager.stop("custom-launch")
         self.assertFalse(self.manager.is_running("custom-launch"))
 
+    def test_running_custom_config_remains_trackable_if_file_is_removed(self):
+        self.manager.create("custom-config-removed")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(self.manager.load("custom-config-removed"))
+        custom_path = self.manager.save_custom_bochsrc(
+            "custom-config-removed", generated + "# custom override\\n"
+        )
+        fake = self.root / "fake-bochs-custom-removed"
+        fake.write_text(
+            f"#!{sys.executable}\\n"
+            "import time\\n"
+            "time.sleep(30)\\n"
+        )
+        fake.chmod(0o755)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            self.manager.start("custom-config-removed", str(fake))
+        custom_path.unlink()
+        self.assertTrue(self.manager.is_running("custom-config-removed"))
+        self.manager.stop("custom-config-removed")
+        self.assertFalse(self.manager.is_running("custom-config-removed"))
+
     def test_iso_attach(self):
         iso = self.root / "setup.iso"
         iso.write_bytes(b"not a real ISO; only tests image path validation")
