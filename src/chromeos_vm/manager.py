@@ -23,6 +23,12 @@ CONFIG_VERSION = 2
 MIN_MEMORY_MIB, MAX_MEMORY_MIB = 16, 4096
 MIN_DISK_GIB, MAX_DISK_GIB = 1, 512
 MIN_IPS, MAX_IPS = 100_000, 500_000_000
+BOCHSRC_MAX_BYTES = 256 * 1024
+BOCHSRC_REQUIRED = {
+    "megs", "cpu", "romimage", "vgaromimage", "display_library",
+    "vga", "ata0-master", "boot", "log",
+}
+BOCHSRC_DIRECTIVE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 class VMError(RuntimeError):
@@ -51,6 +57,75 @@ def bochs_quote(value: str | Path) -> str:
     if any(ch in value for ch in ('"', "\n", "\r", "\x00")):
         raise VMError("A file path contains characters that cannot safely be written to a Bochs config.")
     return '"' + value.replace("\\", "\\\\") + '"'
+
+
+def validate_bochsrc_text(text: str) -> None:
+    """Perform conservative structural checks on an editable Bochs config.
+
+    This is deliberately not described as Bochs' own parser: the emulator is
+    the final authority when the VM is booted. The checks catch common editor
+    mistakes before a custom file is made active.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise VMError("The Bochs configuration is empty.")
+    if len(text.encode("utf-8")) > BOCHSRC_MAX_BYTES:
+        raise VMError(f"The Bochs configuration exceeds {BOCHSRC_MAX_BYTES // 1024} KiB.")
+    if "\\x00" in text:
+        raise VMError("The Bochs configuration contains a NUL character.")
+
+    seen: set[str] = set()
+    values: dict[str, str] = {}
+    for number, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.lower().startswith("#include"):
+            raise VMError(
+                f"Line {number}: #include is not supported in the built-in editor; "
+                "keep the VM configuration self-contained."
+            )
+        if ":" not in line:
+            raise VMError(f"Line {number}: expected a Bochs 'directive: value' line.")
+        directive, value = (part.strip() for part in line.split(":", 1))
+        if not BOCHSRC_DIRECTIVE.fullmatch(directive):
+            raise VMError(f"Line {number}: invalid Bochs directive name.")
+        if not value:
+            raise VMError(f"Line {number}: '{directive}' has no value.")
+        if value.count('"') % 2:
+            raise VMError(f"Line {number}: unmatched double quote.")
+        if directive in BOCHSRC_REQUIRED:
+            if directive in seen:
+                raise VMError(f"Line {number}: duplicate required directive '{directive}'.")
+            seen.add(directive)
+            values[directive] = value
+
+    missing = sorted(BOCHSRC_REQUIRED - seen)
+    if missing:
+        raise VMError("Missing required Bochs directives: " + ", ".join(missing) + ".")
+
+    try:
+        memory = int(values["megs"], 10)
+    except ValueError as exc:
+        raise VMError("The 'megs' directive must contain a whole number of MiB.") from exc
+    if not MIN_MEMORY_MIB <= memory <= MAX_MEMORY_MIB:
+        raise VMError(f"The 'megs' value must be between {MIN_MEMORY_MIB} and {MAX_MEMORY_MIB}.")
+
+    ips_match = re.search(r"\\bips\\s*=\\s*(\\d+)", values["cpu"])
+    if not ips_match:
+        raise VMError("The 'cpu' directive must include an ips= value.")
+    ips = int(ips_match.group(1))
+    if not MIN_IPS <= ips <= MAX_IPS:
+        raise VMError(f"CPU IPS must be between {MIN_IPS:,} and {MAX_IPS:,}.")
+
+    for directive in ("romimage", "vgaromimage"):
+        if not re.search(r"\\bfile\\s*=", values[directive]):
+            raise VMError(f"The '{directive}' directive must include file=.")
+    disk = values["ata0-master"]
+    for required in ("type=disk", "mode=flat", "path=", "cylinders=", "heads=", "spt="):
+        if required not in disk.replace(" ", ""):
+            raise VMError(f"The 'ata0-master' directive must include {required}.")
+    if not values["display_library"] or not values["vga"] or not values["boot"] or not values["log"]:
+        raise VMError("Display, VGA, boot, and log directives must have values.")
 
 
 def disk_geometry(disk_gib: int) -> tuple[int, int, int, int]:
@@ -110,6 +185,13 @@ class VMManager:
     def config_path(self, name: str) -> Path:
         return self.vm_path(name) / "vm.json"
 
+    def custom_bochsrc_path(self, name: str) -> Path:
+        return self.vm_path(name) / "bochsrc.custom"
+
+    def active_bochsrc_path(self, name: str) -> Path:
+        custom = self.custom_bochsrc_path(name)
+        return custom if custom.is_file() else self.vm_path(name) / "bochsrc"
+
     def load(self, name: str) -> VMConfig:
         path = self.config_path(name)
         if not path.is_file():
@@ -166,9 +248,40 @@ class VMManager:
 
     def set_iso(self, name: str, iso: Path | str | None) -> VMConfig:
         cfg = self.load(name)
+        if self.is_running(name):
+            raise VMError("Stop the VM before changing its CD/DVD media.")
+        if self.custom_bochsrc_path(name).exists():
+            raise VMError("Restore the generated Bochs config before changing media; the custom config may reference the old ISO.")
         updated = VMConfig(**{**asdict(cfg), "iso_path": self._validate_iso(iso) if iso else None})
         self._save(updated)
         return updated
+
+    def read_bochsrc(self, name: str) -> str:
+        self.load(name)
+        custom = self.custom_bochsrc_path(name)
+        if custom.is_file():
+            return custom.read_text(encoding="utf-8")
+        return self.render_bochsrc(self.load(name))
+
+    def save_custom_bochsrc(self, name: str, text: str) -> Path:
+        self.load(name)
+        if self.is_running(name):
+            raise VMError("Stop the VM before editing its Bochs configuration.")
+        validate_bochsrc_text(text)
+        path = self.custom_bochsrc_path(name)
+        temporary = path.with_suffix(".custom.tmp")
+        temporary.write_text(text.rstrip() + "\\n", encoding="utf-8")
+        temporary.replace(path)
+        return path
+
+    def reset_custom_bochsrc(self, name: str) -> bool:
+        self.load(name)
+        if self.is_running(name):
+            raise VMError("Stop the VM before restoring its generated Bochs configuration.")
+        path = self.custom_bochsrc_path(name)
+        existed = path.exists()
+        path.unlink(missing_ok=True)
+        return existed
 
     def update_profile(self, name: str, memory_mib: int, cpu_ips: int,
                        iso: Path | str | None) -> VMConfig:
@@ -176,6 +289,8 @@ class VMManager:
         cfg = self.load(name)
         if self.is_running(name):
             raise VMError("Stop the VM before editing its settings or ejecting its ISO.")
+        if self.custom_bochsrc_path(name).exists():
+            raise VMError("Restore the generated Bochs config before editing profile settings; the custom config is currently authoritative.")
         validate_resources(memory_mib, cfg.disk_gib, cpu_ips)
         iso_value = self._validate_iso(iso) if iso else None
         updated = VMConfig(**{
@@ -291,6 +406,10 @@ class VMManager:
         path.write_text(self.render_bochsrc(config), encoding="utf-8")
         return path
 
+    def validate_bochsrc(self, name: str) -> None:
+        validate_bochsrc_text(self.active_bochsrc_path(name).read_text(encoding="utf-8"))
+
+
     def list_vms(self) -> list[VMConfig]:
         result = []
         for path in sorted(self.home.iterdir()):
@@ -344,7 +463,7 @@ class VMManager:
     def _running_pid(self, name: str) -> int | None:
         self.load(name)
         pid_file = self.vm_path(name) / "runtime/bochs.pid"
-        config_file = (self.vm_path(name) / "bochsrc").resolve()
+        config_file = self.active_bochsrc_path(name).resolve()
         try:
             raw = pid_file.read_text(encoding="utf-8").strip()
         except OSError:
@@ -414,7 +533,12 @@ class VMManager:
             )
         if not cfg.disk_path or not Path(cfg.disk_path).is_file():
             raise VMError("The VM's virtual disk is missing.")
-        config_file = self.write_bochsrc(cfg).resolve()
+        self.write_bochsrc(cfg)
+        config_file = self.active_bochsrc_path(name).resolve()
+        try:
+            validate_bochsrc_text(config_file.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise VMError(f"Could not read the active Bochs configuration: {exc}") from exc
         log = self.vm_path(name) / "logs/launcher.log"
         argv = [
             executable, "-q", "-f", str(config_file),
@@ -466,7 +590,7 @@ class VMManager:
         try:
             record = json.loads(pid_file.read_text(encoding="utf-8"))
             expected_start = record["start_ticks"]
-            config_file = str((self.vm_path(name) / "bochsrc").resolve())
+            config_file = str(self.active_bochsrc_path(name).resolve())
             if record["pid"] != pid or record["config"] != config_file:
                 raise ValueError("process identity changed")
             if hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"):
@@ -481,7 +605,7 @@ class VMManager:
                         # A pidfd pins the process identity, preventing a PID
                         # reuse race between verification and signal delivery.
                         if (self._process_start_ticks(pid) != expected_start or
-                                str((self.vm_path(name) / "bochsrc").resolve())
+                                str(self.active_bochsrc_path(name).resolve())
                                 not in self._process_cmdline(pid)):
                             raise VMError("Bochs process identity changed; refusing to signal an unrelated process.")
                         signal.pidfd_send_signal(pidfd, signal.SIGTERM)
