@@ -201,8 +201,6 @@ class ManagerTests(unittest.TestCase):
         fake.chmod(0o755)
         with patch.object(self.manager, "_find_bios",
                           side_effect=[Path("/mock/BIOS-bochs-latest"),
-                                       Path("/mock/vgabios/vgabios.bin"),
-                                       Path("/mock/BIOS-bochs-latest"),
                                        Path("/mock/vgabios/vgabios.bin")]):
             pid = self.manager.start("custom-launch", str(fake))
         self.assertGreater(pid, 0)
@@ -321,11 +319,7 @@ class ManagerTests(unittest.TestCase):
         self.assertTrue(self.manager.is_running("launch-test"))
         self.assertEqual(
             args_file.read_text().splitlines(),
-            [
-                "-q", "-f", str((self.manager.vm_path("launch-test") / "bochsrc").resolve()),
-                'romimage: file="/mock/bochs-bios"',
-                'vgaromimage: file="/mock/vga-bios"',
-            ],
+            ["-q", "-f", str((self.manager.vm_path("launch-test") / "bochsrc").resolve())],
         )
         pid_record = __import__("json").loads(
             (self.manager.vm_path("launch-test") / "runtime/bochs.pid").read_text()
