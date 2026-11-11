@@ -129,7 +129,7 @@ class ManagerTests(unittest.TestCase):
     def test_start_explains_missing_vga_rom(self):
         self.manager.create("missing-rom-test")
         fake = self.root / "fake-bochs"
-        fake.write_text("#!/bin/sh\\nexit 0\\n")
+        fake.write_text("#!/bin/sh\nexit 0\n")
         fake.chmod(0o755)
         with patch.object(self.manager, "_find_bios",
                           side_effect=[Path("/mock/BIOS-bochs-latest"), None]):
@@ -152,14 +152,14 @@ class ManagerTests(unittest.TestCase):
             text = self.manager.render_bochsrc(cfg)
         with self.assertRaisesRegex(VMError, "Missing required Bochs directives"):
             validate_bochsrc_text(text.replace(
-                'vgaromimage: file="/mock/vgabios/vgabios.bin"\\n', ""
+                'vgaromimage: file="/mock/vgabios/vgabios.bin"\n', ""
             ))
         with self.assertRaisesRegex(VMError, "ips="):
             validate_bochsrc_text(text.replace(
                 "ips=10000000", "count=1"
             ))
         with self.assertRaisesRegex(VMError, "#include"):
-            validate_bochsrc_text("#include /tmp/other.conf\\n" + text)
+            validate_bochsrc_text("#include /tmp/other.conf\n" + text)
 
     def test_custom_bochsrc_is_saved_used_and_reset_safely(self):
         self.manager.create("custom-config")
@@ -167,7 +167,7 @@ class ManagerTests(unittest.TestCase):
                           side_effect=[Path("/mock/BIOS-bochs-latest"),
                                        Path("/mock/vgabios/vgabios.bin")]):
             generated = self.manager.render_bochsrc(self.manager.load("custom-config"))
-        custom = generated + "mouse: type=imps2, enabled=1\\n"
+        custom = generated + "mouse: type=imps2, enabled=1\n"
         path = self.manager.save_custom_bochsrc("custom-config", custom)
         self.assertEqual(path, self.manager.custom_bochsrc_path("custom-config"))
         self.assertEqual(path.read_text(encoding="utf-8"), custom)
@@ -188,15 +188,15 @@ class ManagerTests(unittest.TestCase):
                           side_effect=[Path("/mock/BIOS-bochs-latest"),
                                        Path("/mock/vgabios/vgabios.bin")]):
             generated = self.manager.render_bochsrc(self.manager.load("custom-launch"))
-        custom = generated + "# custom config\\n"
+        custom = generated + "# custom config\n"
         custom_path = self.manager.save_custom_bochsrc("custom-launch", custom)
         fake = self.root / "fake-bochs-custom"
         args_file = self.root / "custom-bochs-args.txt"
         fake.write_text(
-            f"#!{sys.executable}\\n"
-            "import pathlib, sys, time\\n"
-            f"pathlib.Path({str(args_file)!r}).write_text(chr(10).join(sys.argv[1:]) + chr(10))\\n"
-            "time.sleep(30)\\n"
+            f"#!{sys.executable}\n"
+            "import pathlib, sys, time\n"
+            f"pathlib.Path({str(args_file)!r}).write_text(chr(10).join(sys.argv[1:]) + chr(10))\n"
+            "time.sleep(30)\n"
         )
         fake.chmod(0o755)
         with patch.object(self.manager, "_find_bios",
