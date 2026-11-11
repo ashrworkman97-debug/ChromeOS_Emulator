@@ -240,6 +240,8 @@ class ManagerTests(unittest.TestCase):
             self.manager.start("custom-config-removed", str(fake))
         custom_path.unlink()
         self.assertTrue(self.manager.is_running("custom-config-removed"))
+        with self.assertRaisesRegex(VMError, "Stop the VM before deleting it"):
+            self.manager.delete("custom-config-removed")
         self.manager.stop("custom-config-removed")
         self.assertFalse(self.manager.is_running("custom-config-removed"))
 
