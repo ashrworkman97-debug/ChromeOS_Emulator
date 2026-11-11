@@ -272,7 +272,7 @@ class VMManager:
         validate_bochsrc_text(text)
         path = self.custom_bochsrc_path(name)
         temporary = path.with_suffix(".custom.tmp")
-        temporary.write_text(text.rstrip() + "\\n", encoding="utf-8")
+        temporary.write_text(text.rstrip() + "\n", encoding="utf-8")
         temporary.replace(path)
         return path
 
