@@ -225,13 +225,13 @@ class ManagerTests(unittest.TestCase):
                                        Path("/mock/vgabios/vgabios.bin")]):
             generated = self.manager.render_bochsrc(self.manager.load("custom-config-removed"))
         custom_path = self.manager.save_custom_bochsrc(
-            "custom-config-removed", generated + "# custom override\\n"
+            "custom-config-removed", generated + "# custom override\n"
         )
         fake = self.root / "fake-bochs-custom-removed"
         fake.write_text(
-            f"#!{sys.executable}\\n"
-            "import time\\n"
-            "time.sleep(30)\\n"
+            f"#!{sys.executable}\n"
+            "import time\n"
+            "time.sleep(30)\n"
         )
         fake.chmod(0o755)
         with patch.object(self.manager, "_find_bios",
