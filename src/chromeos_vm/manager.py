@@ -70,20 +70,22 @@ def validate_bochsrc_text(text: str) -> None:
         raise VMError("The Bochs configuration is empty.")
     if len(text.encode("utf-8")) > BOCHSRC_MAX_BYTES:
         raise VMError(f"The Bochs configuration exceeds {BOCHSRC_MAX_BYTES // 1024} KiB.")
-    if "\\x00" in text:
+    if "\x00" in text:
         raise VMError("The Bochs configuration contains a NUL character.")
 
     seen: set[str] = set()
     values: dict[str, str] = {}
     for number, raw_line in enumerate(text.splitlines(), start=1):
         line = raw_line.strip()
-        if not line or line.startswith("#"):
+        if not line:
             continue
         if line.lower().startswith("#include"):
             raise VMError(
                 f"Line {number}: #include is not supported in the built-in editor; "
                 "keep the VM configuration self-contained."
             )
+        if line.startswith("#"):
+            continue
         if ":" not in line:
             raise VMError(f"Line {number}: expected a Bochs 'directive: value' line.")
         directive, value = (part.strip() for part in line.split(":", 1))
@@ -110,7 +112,7 @@ def validate_bochsrc_text(text: str) -> None:
     if not MIN_MEMORY_MIB <= memory <= MAX_MEMORY_MIB:
         raise VMError(f"The 'megs' value must be between {MIN_MEMORY_MIB} and {MAX_MEMORY_MIB}.")
 
-    ips_match = re.search(r"\\bips\\s*=\\s*(\\d+)", values["cpu"])
+    ips_match = re.search(r"\bips\s*=\s*(\d+)", values["cpu"])
     if not ips_match:
         raise VMError("The 'cpu' directive must include an ips= value.")
     ips = int(ips_match.group(1))
@@ -118,7 +120,7 @@ def validate_bochsrc_text(text: str) -> None:
         raise VMError(f"CPU IPS must be between {MIN_IPS:,} and {MAX_IPS:,}.")
 
     for directive in ("romimage", "vgaromimage"):
-        if not re.search(r"\\bfile\\s*=", values[directive]):
+        if not re.search(r"\bfile\s*=", values[directive]):
             raise VMError(f"The '{directive}' directive must include file=.")
     disk = values["ata0-master"]
     for required in ("type=disk", "mode=flat", "path=", "cylinders=", "heads=", "spt="):
