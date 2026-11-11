@@ -523,16 +523,6 @@ class VMManager:
         executable = self.find_bochs(bochs_override)
         if not executable:
             raise VMError("Bochs was not found. Install it with: sudo apt install bochs bochs-sdl")
-        system_bios = self._find_bios("BIOS-bochs-latest")
-        if not system_bios:
-            raise VMError("Bochs system BIOS was not found. Run: sudo apt update && sudo apt install -y bochsbios")
-        vga_bios = self._find_bios("VGABIOS-lgpl-latest")
-        if not vga_bios:
-            raise VMError(
-                "Bochs VGA BIOS was not found. Debian 13's vgabios package installs "
-                "/usr/share/vgabios/vgabios.bin. Run: "
-                "sudo apt update && sudo apt install -y vgabios"
-            )
         if not cfg.disk_path or not Path(cfg.disk_path).is_file():
             raise VMError("The VM's virtual disk is missing.")
         self.write_bochsrc(cfg)
@@ -542,11 +532,10 @@ class VMManager:
         except OSError as exc:
             raise VMError(f"Could not read the active Bochs configuration: {exc}") from exc
         log = self.vm_path(name) / "logs/launcher.log"
-        argv = [
-            executable, "-q", "-f", str(config_file),
-            f"romimage: file={bochs_quote(system_bios)}",
-            f"vgaromimage: file={bochs_quote(vga_bios)}",
-        ]
+        # ROM paths live in the generated config. Do not add command-line
+        # overrides here: that would silently override a user's custom ROM
+        # selections in bochsrc.custom.
+        argv = [executable, "-q", "-f", str(config_file)]
         try:
             with log.open("ab") as output:
                 # Use posix_spawn rather than leaving a Popen object behind for
