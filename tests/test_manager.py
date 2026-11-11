@@ -9,7 +9,7 @@ from pathlib import Path
 
 from chromeos_vm.manager import (
     VMConfig, VMError, VMManager, bochs_quote, disk_geometry,
-    validate_name, validate_resources,
+    validate_name, validate_resources, validate_bochsrc_text,
 )
 
 
@@ -135,6 +135,90 @@ class ManagerTests(unittest.TestCase):
                           side_effect=[Path("/mock/BIOS-bochs-latest"), None]):
             with self.assertRaisesRegex(VMError, "apt install -y vgabios"):
                 self.manager.start("missing-rom-test", str(fake))
+
+    def test_generated_bochsrc_passes_static_validation(self):
+        cfg = self.manager.create("validate-generated")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            text = self.manager.render_bochsrc(cfg)
+        validate_bochsrc_text(text)
+
+    def test_bochsrc_validator_rejects_missing_required_device_and_bad_cpu(self):
+        cfg = self.manager.create("invalid-config")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            text = self.manager.render_bochsrc(cfg)
+        with self.assertRaisesRegex(VMError, "Missing required Bochs directives"):
+            validate_bochsrc_text(text.replace(
+                'vgaromimage: file="/mock/vgabios/vgabios.bin"\\n', ""
+            ))
+        with self.assertRaisesRegex(VMError, "ips="):
+            validate_bochsrc_text(text.replace(
+                "ips=10000000", "count=1"
+            ))
+        with self.assertRaisesRegex(VMError, "#include"):
+            validate_bochsrc_text("#include /tmp/other.conf\\n" + text)
+
+    def test_custom_bochsrc_is_saved_used_and_reset_safely(self):
+        self.manager.create("custom-config")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(self.manager.load("custom-config"))
+        custom = generated + "mouse: type=imps2, enabled=1\\n"
+        path = self.manager.save_custom_bochsrc("custom-config", custom)
+        self.assertEqual(path, self.manager.custom_bochsrc_path("custom-config"))
+        self.assertEqual(path.read_text(encoding="utf-8"), custom)
+        self.assertEqual(self.manager.active_bochsrc_path("custom-config"), path)
+        with self.assertRaisesRegex(VMError, "custom config is currently authoritative"):
+            self.manager.update_profile("custom-config", 768, 10_000_000, None)
+        with self.assertRaisesRegex(VMError, "Restore the generated Bochs config"):
+            self.manager.set_iso("custom-config", None)
+        self.assertTrue(self.manager.reset_custom_bochsrc("custom-config"))
+        self.assertFalse(self.manager.custom_bochsrc_path("custom-config").exists())
+        self.assertEqual(self.manager.active_bochsrc_path("custom-config").name, "bochsrc")
+        updated = self.manager.update_profile("custom-config", 768, 10_000_000, None)
+        self.assertEqual(updated.memory_mib, 768)
+
+    def test_start_tracks_custom_config_path(self):
+        self.manager.create("custom-launch")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(self.manager.load("custom-launch"))
+        custom = generated + "# custom config\\n"
+        custom_path = self.manager.save_custom_bochsrc("custom-launch", custom)
+        fake = self.root / "fake-bochs-custom"
+        args_file = self.root / "custom-bochs-args.txt"
+        fake.write_text(
+            f"#!{sys.executable}\\n"
+            "import pathlib, sys, time\\n"
+            f"pathlib.Path({str(args_file)!r}).write_text(chr(10).join(sys.argv[1:]) + chr(10))\\n"
+            "time.sleep(30)\\n"
+        )
+        fake.chmod(0o755)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin"),
+                                       Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            pid = self.manager.start("custom-launch", str(fake))
+        self.assertGreater(pid, 0)
+        deadline = time.monotonic() + 2
+        while not args_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(args_file.exists(), "mock Bochs did not record its custom config")
+        args = args_file.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(args[args.index("-f") + 1], str(custom_path.resolve()))
+        self.assertTrue(self.manager.is_running("custom-launch"))
+        record = __import__("json").loads(
+            (self.manager.vm_path("custom-launch") / "runtime/bochs.pid").read_text()
+        )
+        self.assertEqual(record["config"], str(custom_path.resolve()))
+        self.manager.stop("custom-launch")
+        self.assertFalse(self.manager.is_running("custom-launch"))
 
     def test_iso_attach(self):
         iso = self.root / "setup.iso"
