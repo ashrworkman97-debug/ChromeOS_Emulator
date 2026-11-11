@@ -98,7 +98,7 @@ VMs live in `~/.local/share/chromeos-vm-studio` by default. Set `CHROMEOS_VM_HOM
 - Bochs is software emulation. It is slower than a KVM-backed VM and can be CPU-intensive on a low-power Chromebook.
 - The app itself works inside the Crostini Linux environment; it does not have direct privileged access to ChromeOS's host virtualization services.
 - Nested virtualization/KVM is not assumed and is not needed by the Bochs backend.
-- The app does not bundle operating-system installation media or proprietary firmware/ROM dumps. Use media and firmware that you are legally entitled to use. The installer installs Debian's `bochsbios` and `vgabios` packages. On Debian 13, the VGA ROM is `/usr/share/vgabios/vgabios.bin`; do not create a symlink to the non-existent `/usr/share/bochs/VGABIOS-lgpl-latest.bin`. The app writes the discovered ROM path into its generated Bochs config and also passes it as an explicit Bochs command-line override.
+- The app does not bundle operating-system installation media or proprietary firmware/ROM dumps. Use media and firmware that you are legally entitled to use. The installer installs Debian's `bochsbios` and `vgabios` packages. On Debian 13, the VGA ROM is `/usr/share/vgabios/vgabios.bin`; do not create a symlink to the non-existent `/usr/share/bochs/VGABIOS-lgpl-latest.bin`. The app writes the discovered ROM paths directly into its generated Bochs config.
 - The graphical VM manager currently launches Bochs in its own window rather than embedding the guest display.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) for details.
