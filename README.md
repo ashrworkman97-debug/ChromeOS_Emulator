@@ -8,6 +8,12 @@ This project is at an early stage. The first usable backend is [Bochs](https://b
 
 Select a VM in the library and choose **Edit VM…**. Stop the VM before changing settings. The editor can change RAM, Bochs CPU IPS, and the attached CD/DVD image; use **Eject ISO** to clear installation media. Save changes, then boot again. Virtual disk resizing is not supported yet.
 
+## Advanced Bochs configuration
+
+Select a stopped VM and choose **Bochs config…** to edit the complete bochsrc text in the native manager. **Validate** runs conservative static checks for required directives, memory/IPS ranges, disk layout, and common formatting mistakes. **Save custom config** stores a separate bochsrc.custom file which is used by the next boot; the generated bochsrc remains available as a reset point.
+
+The built-in checks are not Bochs' parser and cannot prove every device option is supported by the installed build. Bochs performs final parsing when the VM starts. If you save a custom configuration, the profile editor and ISO controls are blocked until you choose **Restore generated**, so profile settings cannot silently diverge from the active hardware config. The custom file is kept with the VM and is not touched by app updates.
+
 ## What runs where?
 
 - **Host:** Your Chromebook running ChromeOS.
@@ -101,7 +107,7 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 
 1. Native Crostini desktop manager, VM library, sparse raw disks, Bochs GUI launch/stop, logs, ISO selection/ejection, editable RAM/CPU settings, and confirmed deletion. (Implemented; CI GUI smoke-tested.)
 2. Extend hardware configuration (machine family, CPU model, display, IDE/ATA device choices, and removable-media behavior).
-3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, and stale-marker cleanup. (Implemented and tested.) Remaining: guest shutdown guidance, richer status diagnostics, and configuration validation.
+3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, and static validation. (Implemented and tested.) Remaining: guest shutdown guidance and richer status diagnostics.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
 5. Storage import/export, clone, backup, and disk resizing with safeguards.
 6. Evaluate an optional accelerated non-QEMU KVM backend only for compatible guests on hosts that actually expose nested KVM.
@@ -115,7 +121,7 @@ A milestone is not complete just because a command or UI control exists: tests a
 python3 -m unittest discover -s tests -v
 ```
 
-CI runs the suite on Python 3.11, 3.12, and 3.13. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
+CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display, verifies Debian 13 ROM package paths, and runs a short headless Bochs benchmark to prove the generated config is accepted by the real emulator. The headless check uses an empty test disk; it is not a guest OS installation/boot test. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
 
 ## License
 
