@@ -465,7 +465,9 @@ class VMManager:
     def _running_pid(self, name: str) -> int | None:
         self.load(name)
         pid_file = self.vm_path(name) / "runtime/bochs.pid"
-        config_file = self.active_bochsrc_path(name).resolve()
+        generated_config = (self.vm_path(name) / "bochsrc").resolve()
+        custom_config = self.custom_bochsrc_path(name).resolve()
+        allowed_configs = {str(generated_config), str(custom_config)}
         try:
             raw = pid_file.read_text(encoding="utf-8").strip()
         except OSError:
@@ -483,11 +485,13 @@ class VMManager:
                 recorded_config = record["config"]
                 if (type(pid) is not int or pid <= 1 or
                         type(recorded_start) is not int or recorded_start <= 0 or
-                        recorded_config != str(config_file)):
+                        recorded_config not in allowed_configs):
                     raise ValueError("invalid process identity")
+                config_file = Path(recorded_config)
             else:
                 pid = int(raw)
                 recorded_start = None
+                config_file = self.active_bochsrc_path(name).resolve()
         except (ValueError, TypeError, KeyError, json.JSONDecodeError):
             pid_file.unlink(missing_ok=True)
             return None
@@ -581,8 +585,12 @@ class VMManager:
         try:
             record = json.loads(pid_file.read_text(encoding="utf-8"))
             expected_start = record["start_ticks"]
-            config_file = str(self.active_bochsrc_path(name).resolve())
-            if record["pid"] != pid or record["config"] != config_file:
+            config_file = record["config"]
+            allowed_configs = {
+                str((self.vm_path(name) / "bochsrc").resolve()),
+                str(self.custom_bochsrc_path(name).resolve()),
+            }
+            if (record["pid"] != pid or config_file not in allowed_configs):
                 raise ValueError("process identity changed")
             if hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"):
                 try:
@@ -596,8 +604,7 @@ class VMManager:
                         # A pidfd pins the process identity, preventing a PID
                         # reuse race between verification and signal delivery.
                         if (self._process_start_ticks(pid) != expected_start or
-                                str(self.active_bochsrc_path(name).resolve())
-                                not in self._process_cmdline(pid)):
+                                config_file not in self._process_cmdline(pid)):
                             raise VMError("Bochs process identity changed; refusing to signal an unrelated process.")
                         signal.pidfd_send_signal(pidfd, signal.SIGTERM)
                     finally:
