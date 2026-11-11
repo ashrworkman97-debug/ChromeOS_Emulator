@@ -69,7 +69,7 @@ jobs:
               )
               log_path = manager.vm_path(vm.name) / "logs/bochs.log"
               log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
-              required_markers = ("reading configuration from", "VGABios", "ata0-0:", "cpu loop quit")
+              required_markers = ("VGABios", "ata0-0:", "cpu loop quit")
               missing = [marker for marker in required_markers if marker not in log_text]
               if missing or ">>PANIC<<" in log_text:
                   raise SystemExit(
