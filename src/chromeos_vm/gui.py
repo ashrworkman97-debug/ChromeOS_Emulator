@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 
-from .manager import VMError, VMManager
+from .manager import VMError, VMManager, validate_bochsrc_text
 from .updater import UpdateResult, check_for_updates
 
 
@@ -154,6 +154,9 @@ class ChromeOSVMStudio:
                    command=self.attach_iso).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Edit VM…", style="Action.TButton",
                    command=self.edit_vm).pack(fill="x", pady=3)
+        self.config_button = ttk.Button(action_panel, text="Bochs config…", style="Action.TButton",
+                                         command=self.edit_bochs_config)
+        self.config_button.pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Open folder", style="Action.TButton",
                    command=self.open_folder).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="View logs", style="Action.TButton",
@@ -368,6 +371,106 @@ class ChromeOSVMStudio:
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Save changes", command=save).pack(side="right")
         frame.columnconfigure(1, weight=1)
+
+    def edit_bochs_config(self) -> None:
+        """Edit a stopped VM's custom bochsrc; generated settings remain recoverable."""
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        try:
+            original = self.manager.read_bochsrc(name)
+        except (VMError, OSError) as exc:
+            messagebox.showerror(
+                "Could not open Bochs configuration",
+                str(exc) + "\\n\\nInstall the Debian Bochs BIOS packages before generating a configuration.",
+                parent=self.root,
+            )
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"{name} — Bochs configuration")
+        dialog.geometry("920x680")
+        dialog.minsize(720, 480)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text=("Static validation checks common structure and required devices; it is not Bochs' parser. "
+                  "Bochs validates the complete configuration when you boot. A saved custom file overrides "
+                  "profile-generated settings until you restore the generated config."),
+            wraplength=870,
+        ).pack(fill="x", pady=(0, 9))
+
+        editor_frame = ttk.Frame(frame)
+        editor_frame.pack(fill="both", expand=True)
+        editor = tk.Text(editor_frame, wrap="none", undo=True, font=("TkFixedFont", 10))
+        vertical = ttk.Scrollbar(editor_frame, orient="vertical", command=editor.yview)
+        horizontal = ttk.Scrollbar(editor_frame, orient="horizontal", command=editor.xview)
+        editor.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        editor.grid(row=0, column=0, sticky="nsew")
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
+        editor_frame.rowconfigure(0, weight=1)
+        editor_frame.columnconfigure(0, weight=1)
+        editor.insert("1.0", original)
+
+        state = tk.StringVar(value=(
+            "Custom configuration is active." if self.manager.custom_bochsrc_path(name).is_file()
+            else "Showing the generated configuration; saving creates a custom override."
+        ))
+        ttk.Label(frame, textvariable=state, wraplength=870).pack(fill="x", pady=(8, 6))
+
+        def validate() -> bool:
+            try:
+                validate_bochsrc_text(editor.get("1.0", "end-1c"))
+            except VMError as exc:
+                state.set("Validation failed: " + str(exc))
+                messagebox.showerror("Bochs configuration validation", str(exc), parent=dialog)
+                return False
+            state.set("Static checks passed. Bochs still performs final parsing at boot.")
+            return True
+
+        def save() -> None:
+            try:
+                path = self.manager.save_custom_bochsrc(name, editor.get("1.0", "end-1c"))
+            except (VMError, OSError) as exc:
+                messagebox.showerror("Could not save configuration", str(exc), parent=dialog)
+                return
+            dialog.destroy()
+            self._status(f"Saved custom Bochs configuration for {name}. It will be used on the next boot.")
+            self.refresh()
+
+        def restore() -> None:
+            if not self.manager.custom_bochsrc_path(name).is_file():
+                state.set("No custom override exists; the generated configuration is already active.")
+                return
+            if not messagebox.askyesno(
+                "Restore generated configuration",
+                "Discard the custom Bochs configuration and return to settings generated from the VM profile?",
+                parent=dialog,
+            ):
+                return
+            try:
+                self.manager.reset_custom_bochsrc(name)
+                editor.delete("1.0", "end")
+                editor.insert("1.0", self.manager.read_bochsrc(name))
+            except (VMError, OSError) as exc:
+                messagebox.showerror("Could not restore configuration", str(exc), parent=dialog)
+                return
+            state.set("Generated configuration restored. Custom edits were discarded.")
+            self._status(f"Restored generated Bochs configuration for {name}.")
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(8, 0))
+        ttk.Button(buttons, text="Validate", command=validate).pack(side="left")
+        ttk.Button(buttons, text="Restore generated", command=restore).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Close", command=dialog.destroy).pack(side="right")
+        ttk.Button(buttons, text="Save custom config", style="Primary.TButton",
+                   command=save).pack(side="right", padx=(0, 6))
 
     def attach_iso(self) -> None:
         name = self.selected_name()
