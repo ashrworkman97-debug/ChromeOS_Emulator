@@ -379,6 +379,13 @@ class ChromeOSVMStudio:
             self._status("Select a virtual machine first.")
             return
         try:
+            if self.manager.is_running(name):
+                messagebox.showinfo(
+                    "Stop the VM first",
+                    "The Bochs configuration can only be changed while this VM is stopped.",
+                    parent=self.root,
+                )
+                return
             original = self.manager.read_bochsrc(name)
         except (VMError, OSError) as exc:
             messagebox.showerror(
