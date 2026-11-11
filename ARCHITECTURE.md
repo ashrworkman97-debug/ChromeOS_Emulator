@@ -30,11 +30,12 @@ The manager owns `~/.local/share/chromeos-vm-studio/<vm-name>`:
 - `vm.json`: versioned VM profile
 - `disk.raw`: sparse virtual hard disk
 - `bochsrc`: generated Bochs configuration
+- `bochsrc.custom`: optional user-edited Bochs configuration, active in preference to the generated file
 - `logs/bochs.log`: emulator log
 - `logs/launcher.log`: launcher stdout/stderr
 - `runtime/bochs.pid`: process identity while running
 
-The app generates Bochs syntax using quoted local file paths, validates resource bounds, and invokes the Bochs executable with an argument array (never a shell command). The guest display is the actual Bochs GUI window, not a simulated canvas inside the manager.
+The app generates Bochs syntax using quoted local file paths, validates resource bounds, and invokes the Bochs executable with an argument array (never a shell command). The native configuration editor can save a custom bochsrc override; static checks cover required directives and common formatting/resource mistakes, but Bochs itself remains the final parser at boot. While a custom override exists, profile and ISO edits are blocked until the user restores the generated config. Process identity tracking records whichever config file is actually active. The guest display is the actual Bochs GUI window, not a simulated canvas inside the manager.
 
 ## Backend choice
 
