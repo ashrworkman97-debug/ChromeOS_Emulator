@@ -10,6 +10,7 @@
 | Updates | Background commit-based updater from this repository's `main` branch |
 | Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
 | Guest display | Bochs's own GUI window |
+| Bochs configuration | Native text editor, conservative static checks, custom override/reset |
 
 ## Crostini
 
@@ -22,6 +23,10 @@ Nested virtualization has varied by ChromeOS device/kernel and should not be ass
 Bochs models a broad set of x86 CPUs and standard PC devices, including VGA, IDE hard disks, ATAPI CD-ROM, keyboard, mouse, sound and selected network adapters depending on build options. Bochs supports x86-64 extensions, but that does not guarantee every modern OS installer or peripheral works with every Bochs configuration.
 
 Software instruction emulation is expensive. Start with modest guest RAM and older/lightweight guest systems. Performance will be limited on low-power Chromebook CPUs. Windows 10/11 is not a target performance promise.
+
+## Configuration validation
+
+The app's editor performs static checks for required directives, quoting, memory/IPS ranges, and the raw IDE disk declaration. This is intentionally not represented as a complete Bochs parser: optional directives and device availability vary by Bochs build. Debian 13 CI additionally runs Bochs itself in headless benchmark mode against the generated configuration and an empty test disk. This checks parser/device initialization but does not boot an installed guest OS.
 
 ## Required user inputs
 
