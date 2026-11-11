@@ -69,9 +69,11 @@ jobs:
                   capture_output=True, text=True, timeout=45, check=False,
               )
               if result.returncode:
+                  log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+                  log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
                   raise SystemExit(
                       "Bochs config/parser smoke failed.\\n"
-                      + result.stdout[-5000:] + result.stderr[-5000:]
+                      + result.stdout[-3000:] + result.stderr[-3000:] + log_text[-8000:]
                   )
               print("Bochs accepted the generated configuration and completed a 1M-tick empty-disk benchmark.")
           PY
