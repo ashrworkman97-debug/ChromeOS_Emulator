@@ -60,7 +60,7 @@ jobs:
               config = manager.render_bochsrc(vm)
               # CI has no physical audio device; use Bochs' documented dummy
               # sound drivers while still parsing the normal generated PC config.
-              config += "\nsound: waveoutdrv=dummy, waveindrv=dummy, midioutdrv=dummy\nspeaker: enabled=0\n"
+              config += "\nspeaker: enabled=0\n"
               config_path = manager.vm_path(vm.name) / "bochsrc.ci"
               config_path.write_text(config, encoding="utf-8")
               result = subprocess.run(
