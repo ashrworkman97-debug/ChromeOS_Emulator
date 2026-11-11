@@ -67,14 +67,20 @@ jobs:
                    "bochs", "-benchmark", "1", "-q", "-f", str(config_path)],
                   capture_output=True, text=True, timeout=45, check=False,
               )
-              if result.returncode:
-                  log_path = manager.vm_path(vm.name) / "logs/bochs.log"
-                  log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+              log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+              log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+              required_markers = ("reading configuration from", "VGABios", "ata0-0:", "cpu loop quit")
+              missing = [marker for marker in required_markers if marker not in log_text]
+              if missing or ">>PANIC<<" in log_text:
                   raise SystemExit(
-                      "Bochs config/parser smoke failed.\\n"
-                      + result.stdout[-3000:] + result.stderr[-3000:] + log_text[-8000:]
+                      "Bochs config/parser smoke failed; missing log markers: "
+                      + repr(missing) + "\\n" + result.stdout[-3000:]
+                      + result.stderr[-3000:] + log_text[-8000:]
                   )
-              print("Bochs accepted the generated configuration and completed a 1M-tick empty-disk benchmark.")
+              print(
+                  "Bochs parsed the generated config, initialized BIOS/VGA/IDE, "
+                  f"and completed the bounded benchmark (exit status {result.returncode})."
+              )
           PY
 
   native-gui-smoke:
