@@ -25,7 +25,7 @@ jobs:
       - name: Install Debian 13 packages used by Crostini
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends python3 bochs bochs-sdl bochsbios vgabios
+          apt-get install -y --no-install-recommends python3 bochs bochs-sdl bochsbios vgabios xvfb
       - name: Verify real Debian package ROMs and generated Bochs configuration
         run: |
           PYTHONPATH=src python3 - <<'PY'
@@ -57,19 +57,18 @@ jobs:
           with tempfile.TemporaryDirectory() as temp:
               manager = VMManager(Path(temp) / "vms")
               vm = manager.create("bochs-parser-smoke", memory_mib=128, disk_gib=1)
-              config = manager.render_bochsrc(vm).replace(
-                  "display_library: sdl2", "display_library: nogui"
-              )
+              config = manager.render_bochsrc(vm)
               config_path = manager.vm_path(vm.name) / "bochsrc.ci"
               config_path.write_text(config, encoding="utf-8")
               result = subprocess.run(
-                  ["bochs", "-q", "-f", str(config_path), "-benchmark", "1"],
+                  ["xvfb-run", "-a", "env", "SDL_VIDEODRIVER=x11",
+                   "bochs", "-q", "-f", str(config_path), "-benchmark", "1"],
                   capture_output=True, text=True, timeout=45, check=False,
               )
               if result.returncode:
                   raise SystemExit(
-                      "Bochs config/parser smoke failed.\\nSTDOUT:\\n"
-                      + result.stdout[-5000:] + "\\nSTDERR:\\n" + result.stderr[-5000:]
+                      "Bochs config/parser smoke failed.\\n"
+                      + result.stdout[-5000:] + result.stderr[-5000:]
                   )
               print("Bochs accepted the generated configuration and completed a 1M-tick empty-disk benchmark.")
           PY
