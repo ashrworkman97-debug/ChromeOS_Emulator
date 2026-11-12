@@ -49,6 +49,10 @@ crosvm is a VMM using Linux KVM and virtio devices, not a general PC chipset emu
 - Do not accept newlines or quote injection in generated configuration paths.
 - Track emulator PID, Linux process start time, and the exact VM config path; migrate legacy PID-only markers only when `/proc` confirms the matching command line.
 - Use Linux pidfds for stop signals when available, with a final process-identity check on older kernels, so PID reuse cannot redirect a stop request to an unrelated process.
+- Keep each managed guest disk at `<private-vm-directory>/disk.raw`; validate the profile path against that exact location before launch.
+- Refuse VM directories that are symlinks or resolve outside the configured storage root.
+- Before handing a disk to Bochs, require a regular non-symlink file, a single hard link, and the exact byte length implied by the VM's CHS geometry. This avoids opening redirected, shared, truncated, or replaced files.
+- A custom `ata0-master` directive must still point to the VM's managed `disk.raw`; custom device settings cannot redirect the primary guest disk outside private storage.
 - Never delete a VM disk while its emulator is running.
 - Ask for explicit confirmation before permanent disk deletion.
 - Do not bundle proprietary guest installation media or ROM/BIOS dumps.
