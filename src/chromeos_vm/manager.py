@@ -171,6 +171,10 @@ class VMConfig:
         validate_resources(config.memory_mib, config.disk_gib, config.cpu_ips)
         if config.backend != "bochs" or config.disk_format != "raw":
             raise VMError("This version supports the Bochs backend and raw disks only.")
+        if not isinstance(config.disk_path, str) or not config.disk_path:
+            raise VMError("The VM profile must contain a disk path.")
+        if config.iso_path is not None and not isinstance(config.iso_path, str):
+            raise VMError("The VM profile contains an invalid ISO path.")
         return config
 
 
@@ -269,12 +273,73 @@ class VMManager:
         self.load(name)
         if self.is_running(name):
             raise VMError("Stop the VM before editing its Bochs configuration.")
-        validate_bochsrc_text(text)
+        self.validate_bochsrc_for_vm(name, text)
         path = self.custom_bochsrc_path(name)
         temporary = path.with_suffix(".custom.tmp")
         temporary.write_text(text.rstrip() + "\n", encoding="utf-8")
         temporary.replace(path)
         return path
+
+    def _expected_disk_path(self, name: str) -> Path:
+        return (self.vm_path(name) / "disk.raw").resolve()
+
+    def validate_bochsrc_for_vm(self, name: str, text: str) -> None:
+        """Validate the custom config without allowing it to redirect the managed disk."""
+        self.load(name)
+        validate_bochsrc_text(text)
+        disk_value = None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or ":" not in line:
+                continue
+            directive, value = (part.strip() for part in line.split(":", 1))
+            if directive == "ata0-master":
+                match = re.search(r'\bpath\s*=\s*"([^"]*)"', value)
+                if match:
+                    disk_value = match.group(1).replace("\\\\", "\\")
+                break
+        if not disk_value:
+            raise VMError("The managed ata0-master disk must use a quoted path.")
+        try:
+            configured = Path(disk_value).resolve()
+        except OSError as exc:
+            raise VMError(f"Could not resolve the configured VM disk path: {exc}") from exc
+        if configured != self._expected_disk_path(name):
+            raise VMError(
+                "The ata0-master disk must remain at this VM's private disk.raw path. "
+                "Use the storage tools to manage guest disks; custom configs cannot redirect it."
+            )
+
+    def validate_disk_image(self, name: str, config: VMConfig | None = None) -> Path:
+        """Refuse missing, redirected, linked, or truncated managed disk images."""
+        cfg = config or self.load(name)
+        expected = self._expected_disk_path(name)
+        try:
+            configured = Path(cfg.disk_path).resolve()
+        except (OSError, TypeError) as exc:
+            raise VMError(f"The VM profile has an invalid disk path: {exc}") from exc
+        if configured != expected:
+            raise VMError(
+                "The VM profile's disk path does not point to its private disk.raw file. "
+                "The disk was not opened."
+            )
+
+        disk = self.vm_path(name) / "disk.raw"
+        if disk.is_symlink() or not disk.is_file():
+            raise VMError("The VM's private virtual disk is missing or is not a regular file.")
+        try:
+            info = disk.stat()
+        except OSError as exc:
+            raise VMError(f"Could not inspect the VM's virtual disk: {exc}") from exc
+        if info.st_nlink != 1:
+            raise VMError("The VM disk has additional hard links; refusing to risk modifying another file.")
+        expected_bytes = disk_geometry(cfg.disk_gib)[3]
+        if info.st_size != expected_bytes:
+            raise VMError(
+                f"The VM disk size is {info.st_size:,} bytes, but its profile requires "
+                f"{expected_bytes:,} bytes. The disk was not opened."
+            )
+        return disk.resolve()
 
     def reset_custom_bochsrc(self, name: str) -> bool:
         self.load(name)
@@ -527,12 +592,11 @@ class VMManager:
         executable = self.find_bochs(bochs_override)
         if not executable:
             raise VMError("Bochs was not found. Install it with: sudo apt install bochs bochs-sdl")
-        if not cfg.disk_path or not Path(cfg.disk_path).is_file():
-            raise VMError("The VM's virtual disk is missing.")
+        self.validate_disk_image(name, cfg)
         self.write_bochsrc(cfg)
         config_file = self.active_bochsrc_path(name).resolve()
         try:
-            validate_bochsrc_text(config_file.read_text(encoding="utf-8"))
+            self.validate_bochsrc_for_vm(name, config_file.read_text(encoding="utf-8"))
         except OSError as exc:
             raise VMError(f"Could not read the active Bochs configuration: {exc}") from exc
         log = self.vm_path(name) / "logs/launcher.log"
