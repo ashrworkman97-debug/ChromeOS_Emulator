@@ -10,7 +10,8 @@
 | Updates | Background commit-based updater from this repository's `main` branch |
 | Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
 | Guest display | Bochs's own GUI window |
-| Bochs configuration | Native text editor, conservative static checks, custom override/reset |
+| Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
+| Managed disk safety | Pre-boot private-path, regular-file, link-count, and exact-size checks |
 
 ## Crostini
 
@@ -26,7 +27,7 @@ Software instruction emulation is expensive. Start with modest guest RAM and old
 
 ## Configuration validation
 
-The app's editor performs static checks for required directives, quoting, memory/IPS ranges, and the raw IDE disk declaration. This is intentionally not represented as a complete Bochs parser: optional directives and device availability vary by Bochs build. Debian 13 CI additionally runs Bochs itself in headless benchmark mode against the generated configuration and an empty test disk. This checks parser/device initialization but does not boot an installed guest OS.
+The app's editor performs static checks for required directives, quoting, memory/IPS ranges, and the raw IDE disk declaration. It also requires the primary IDE disk path to remain the VM's private `disk.raw`; it cannot be redirected through a custom config. Before launch, the manager verifies the VM directory is within the configured storage root and that the disk is a regular non-symlink file with one hard link and the exact geometry-derived byte size. This is intentionally not represented as a complete Bochs parser: optional directives and device availability vary by Bochs build. Debian 13 CI additionally runs Bochs itself in headless benchmark mode against the generated configuration and an empty test disk. This checks parser/device initialization but does not boot an installed guest OS.
 
 ## Required user inputs
 
