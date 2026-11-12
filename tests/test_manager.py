@@ -126,6 +126,57 @@ class ManagerTests(unittest.TestCase):
         self.assertIn('romimage: file="/mock/BIOS-bochs-latest"', config)
         self.assertIn('vgaromimage: file="/mock/vgabios/vgabios.bin"', config)
 
+    def test_custom_bochsrc_cannot_redirect_managed_disk_outside_vm_folder(self):
+        cfg = self.manager.create("private-disk-config")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(cfg)
+        outside = self.root / "outside.raw"
+        outside.write_bytes(b"not the managed VM disk")
+        redirected = generated.replace(
+            f'path="{cfg.disk_path}"', f'path="{outside.resolve()}"'
+        )
+        with self.assertRaisesRegex(VMError, "private disk.raw"):
+            self.manager.save_custom_bochsrc(cfg.name, redirected)
+        self.assertFalse(self.manager.custom_bochsrc_path(cfg.name).exists())
+
+    def test_start_rejects_profile_disk_path_outside_private_storage(self):
+        cfg = self.manager.create("redirected-profile")
+        outside = self.root / "outside.raw"
+        outside.write_bytes(b"do not open this file")
+        profile_path = self.manager.config_path(cfg.name)
+        raw = __import__("json").loads(profile_path.read_text(encoding="utf-8"))
+        raw["disk_path"] = str(outside.resolve())
+        profile_path.write_text(__import__("json").dumps(raw), encoding="utf-8")
+        with patch.object(self.manager, "find_bochs", return_value="/usr/bin/true"):
+            with self.assertRaisesRegex(VMError, "private disk.raw"):
+                self.manager.start(cfg.name)
+        self.assertEqual(outside.read_bytes(), b"do not open this file")
+
+    def test_start_rejects_truncated_managed_disk_before_launch(self):
+        cfg = self.manager.create("truncated-disk")
+        Path(cfg.disk_path).write_bytes(b"short disk")
+        with patch.object(self.manager, "find_bochs", return_value="/usr/bin/true"):
+            with self.assertRaisesRegex(VMError, "profile requires"):
+                self.manager.start(cfg.name)
+
+    def test_disk_validation_rejects_symlinks_and_hardlinks(self):
+        cfg = self.manager.create("linked-disk")
+        disk = Path(cfg.disk_path)
+        outside = self.root / "outside.raw"
+        outside.write_bytes(b"outside")
+        disk.unlink()
+        disk.symlink_to(outside)
+        with self.assertRaisesRegex(VMError, "not a regular file"):
+            self.manager.validate_disk_image(cfg.name)
+
+        disk.unlink()
+        disk.write_bytes(b"replacement")
+        os.link(disk, outside)
+        with self.assertRaisesRegex(VMError, "additional hard links"):
+            self.manager.validate_disk_image(cfg.name)
+
     def test_start_explains_missing_vga_rom(self):
         self.manager.create("missing-rom-test")
         fake = self.root / "fake-bochs"
