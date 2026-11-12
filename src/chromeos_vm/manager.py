@@ -313,6 +313,9 @@ class VMManager:
     def validate_disk_image(self, name: str, config: VMConfig | None = None) -> Path:
         """Refuse missing, redirected, linked, or truncated managed disk images."""
         cfg = config or self.load(name)
+        directory = self.vm_path(name)
+        if directory.is_symlink() or directory.resolve().parent != self.home.resolve():
+            raise VMError("The VM directory is outside the private storage folder; refusing to open its disk.")
         expected = self._expected_disk_path(name)
         try:
             configured = Path(cfg.disk_path).resolve()
@@ -474,7 +477,9 @@ class VMManager:
         return path
 
     def validate_bochsrc(self, name: str) -> None:
-        validate_bochsrc_text(self.active_bochsrc_path(name).read_text(encoding="utf-8"))
+        self.validate_bochsrc_for_vm(
+            name, self.active_bochsrc_path(name).read_text(encoding="utf-8")
+        )
 
 
     def list_vms(self) -> list[VMConfig]:
