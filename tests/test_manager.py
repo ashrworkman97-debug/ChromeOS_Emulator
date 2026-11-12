@@ -173,6 +173,7 @@ class ManagerTests(unittest.TestCase):
 
         disk.unlink()
         disk.write_bytes(b"replacement")
+        outside.unlink()
         os.link(disk, outside)
         with self.assertRaisesRegex(VMError, "additional hard links"):
             self.manager.validate_disk_image(cfg.name)
