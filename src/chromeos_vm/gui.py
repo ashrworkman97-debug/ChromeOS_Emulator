@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 
-from .manager import VMError, VMManager, validate_bochsrc_text
+from .manager import VMError, VMManager
 from .updater import UpdateResult, check_for_updates
 
 
@@ -433,7 +433,7 @@ class ChromeOSVMStudio:
 
         def validate() -> bool:
             try:
-                validate_bochsrc_text(editor.get("1.0", "end-1c"))
+                self.manager.validate_bochsrc_for_vm(name, editor.get("1.0", "end-1c"))
             except VMError as exc:
                 state.set("Validation failed: " + str(exc))
                 messagebox.showerror("Bochs configuration validation", str(exc), parent=dialog)
