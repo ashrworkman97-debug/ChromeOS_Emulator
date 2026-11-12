@@ -12,7 +12,9 @@ Select a VM in the library and choose **Edit VM…**. Stop the VM before changin
 
 Select a stopped VM and choose **Bochs config…** to edit the complete bochsrc text in the native manager. **Validate** runs conservative static checks for required directives, memory/IPS ranges, disk layout, and common formatting mistakes. **Save custom config** stores a separate bochsrc.custom file which is used by the next boot; the generated bochsrc remains available as a reset point.
 
-The built-in checks are not Bochs' parser and cannot prove every device option is supported by the installed build. Bochs performs final parsing when the VM starts. If you save a custom configuration, the profile editor and ISO controls are blocked until you choose **Restore generated**, so profile settings cannot silently diverge from the active hardware config. The custom file is kept with the VM and is not touched by app updates.
+The built-in checks are not Bochs' parser and cannot prove every device option is supported by the installed build. Bochs performs final parsing when the VM starts. Validation is VM-aware: the primary `ata0-master` disk must remain the VM's own private `disk.raw`; a custom configuration cannot redirect the managed guest disk to another file. If you save a custom configuration, the profile editor and ISO controls are blocked until you choose **Restore generated**, so profile settings cannot silently diverge from the active hardware config. The custom file is kept with the VM and is not touched by app updates.
+
+Before boot, the manager also verifies that the VM directory is inside the configured private storage folder and is not a symlink, and that the disk is a regular, single-link file at the exact expected size. Missing, redirected, linked, or truncated disks are refused rather than handed to Bochs.
 
 ## What runs where?
 
@@ -76,7 +78,7 @@ After that, future app updates are installed by the app itself. A network connec
 
 Open ChromeOS VM Studio, click **New VM**, choose a name, RAM amount, virtual hard-disk size, and (optionally) a user-provided ISO. Select the VM and click **Boot**. Bochs opens the guest's emulated PC in its own window. Install the guest OS onto the virtual hard disk as you would on a physical PC.
 
-You can attach another ISO later, open the VM's data folder, inspect logs, stop the emulator, or delete a VM. Deleting permanently removes its virtual disk and always requires a confirmation in the GUI. The manager verifies the emulator's Linux process identity (including its start time and VM config path) before reporting it as running or sending a stop signal; stale PID files from older releases are migrated only when they still identify the matching Bochs command.
+You can attach another ISO later, open the VM's data folder, inspect logs, stop the emulator, or delete a VM. Deleting permanently removes its virtual disk and always requires a confirmation in the GUI. Before launch, the manager checks the private disk's canonical path, file type, link count, and exact geometry-derived size. It also verifies the emulator's Linux process identity (including its start time and VM config path) before reporting it as running or sending a stop signal; stale PID files from older releases are migrated only when they still identify the matching Bochs command.
 
 CLI equivalents are also available:
 
