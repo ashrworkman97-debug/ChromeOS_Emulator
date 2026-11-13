@@ -6,13 +6,13 @@ This project is at an early stage. The first usable backend is [Bochs](https://b
 
 ## Editing an existing VM
 
-Select a VM in the library and choose **Edit VM…**. Stop the VM before changing settings. The editor can change RAM, Bochs CPU IPS, and the attached CD/DVD image; use **Eject ISO** to clear installation media. Save changes, then boot again. Virtual disk resizing is not supported yet.
+Select a VM in the library and choose **Edit VM…**. Stop the VM before changing settings. The editor can change RAM, Bochs CPU IPS, and the attached CD/DVD image; use **Eject ISO** to clear CD/DVD media. The **Attach floppy A…** and **Eject floppy A** controls manage a raw floppy image separately. Bochs supports standard 160K through 2.88M image capacities; the manager checks the exact size and attaches the image write-protected by default. When floppy A is attached, the boot order tries floppy, then CD/DVD if present, then hard disk. Virtual disk resizing is not supported yet.
 
 ## Advanced Bochs configuration
 
 Select a stopped VM and choose **Bochs config…** to edit the complete bochsrc text in the native manager. **Validate** runs conservative static checks for required directives, memory/IPS ranges, disk layout, and common formatting mistakes. **Save custom config** stores a separate bochsrc.custom file which is used by the next boot; the generated bochsrc remains available as a reset point.
 
-The built-in checks are not Bochs' parser and cannot prove every device option is supported by the installed build. Bochs performs final parsing when the VM starts. Validation is VM-aware: the primary `ata0-master` disk must remain the VM's own private `disk.raw`; a custom configuration cannot redirect the managed guest disk to another file. If you save a custom configuration, the profile editor and ISO controls are blocked until you choose **Restore generated**, so profile settings cannot silently diverge from the active hardware config. The custom file is kept with the VM and is not touched by app updates.
+The built-in checks are not Bochs' parser and cannot prove every device option is supported by the installed build. Bochs performs final parsing when the VM starts. Validation is VM-aware: the primary `ata0-master` disk must remain the VM's own private `disk.raw`; a custom configuration cannot redirect the managed guest disk to another file. If a floppy image is attached in the VM profile, a custom configuration must continue to reference that same floppy A image. If you save a custom configuration, the profile editor and media controls are blocked until you choose **Restore generated**, so profile settings cannot silently diverge from the active hardware config. The custom file is kept with the VM and is not touched by app updates.
 
 Before boot, the manager also verifies that the VM directory is inside the configured private storage folder and is not a symlink, and that the disk is a regular, single-link file at the exact expected size. Missing, redirected, linked, or truncated disks are refused rather than handed to Bochs.
 
@@ -78,7 +78,7 @@ After that, future app updates are installed by the app itself. A network connec
 
 Open ChromeOS VM Studio, click **New VM**, choose a name, RAM amount, virtual hard-disk size, and (optionally) a user-provided ISO. Select the VM and click **Boot**. Bochs opens the guest's emulated PC in its own window. Install the guest OS onto the virtual hard disk as you would on a physical PC.
 
-You can attach another ISO later, open the VM's data folder, inspect logs, stop the emulator, or delete a VM. Deleting permanently removes its virtual disk and always requires a confirmation in the GUI. Before launch, the manager checks the private disk's canonical path, file type, link count, and exact geometry-derived size. It also verifies the emulator's Linux process identity (including its start time and VM config path) before reporting it as running or sending a stop signal; stale PID files from older releases are migrated only when they still identify the matching Bochs command.
+You can attach another ISO or a bootable floppy image later, eject either medium, open the VM's data folder, inspect logs, stop the emulator, or delete a VM. Floppy images are write-protected by default so the original media is not modified by a guest. Deleting permanently removes the VM's private virtual hard disk and always requires a confirmation in the GUI. Before launch, the manager checks the private disk's canonical path, file type, link count, and exact geometry-derived size, and verifies any attached floppy image still has a supported capacity. It also verifies the emulator's Linux process identity (including its start time and VM config path) before reporting it as running or sending a stop signal; stale PID files from older releases are migrated only when they still identify the matching Bochs command.
 
 CLI equivalents are also available:
 
@@ -108,7 +108,7 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 ## Roadmap
 
 1. Native Crostini desktop manager, VM library, sparse raw disks, Bochs GUI launch/stop, logs, ISO selection/ejection, editable RAM/CPU settings, and confirmed deletion. (Implemented; CI GUI smoke-tested.)
-2. Extend hardware configuration (machine family, CPU model, display, IDE/ATA device choices, and removable-media behavior).
+2. Extend hardware configuration (machine family, CPU model, display, IDE/ATA device choices, and removable-media behavior). (CD/DVD and read-only floppy A attachment/ejection with floppy-first boot order are implemented; broader device selection remains.)
 3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, and static validation. (Implemented and tested.) Remaining: guest shutdown guidance and richer status diagnostics.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
 5. Storage import/export, clone, backup, and disk resizing with safeguards.
@@ -123,7 +123,7 @@ A milestone is not complete just because a command or UI control exists: tests a
 python3 -m unittest discover -s tests -v
 ```
 
-CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display, verifies Debian 13 ROM package paths, and runs a short headless Bochs benchmark to prove the generated config is accepted by the real emulator. The headless check uses an empty test disk; it is not a guest OS installation/boot test. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
+CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display, verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for both the generated hard-disk configuration and an attached 1.44M floppy A image. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
 
 ## License
 
