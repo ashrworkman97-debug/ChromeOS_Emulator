@@ -27,7 +27,7 @@ Guest OS installed from user-provided media
 The updater lives in the installed Python package and runs a background check on app launch (12-hour cooldown). It queries this repository's `main` commit, downloads a bounded GitHub archive, rejects traversal and link entries, stages only regular files, and calls the current venv's `pip` to install the package. Installed commit metadata is stored in `~/.local/opt/chromeos-vm-studio/install.json`. It does not touch VM data. The GUI prompts for restart after installation; each guest remains its own Bochs process. A manual check is available with the Updates button or `chromeos-vm update --force`.
 
 The manager owns `~/.local/share/chromeos-vm-studio/<vm-name>`:
-- `vm.json`: versioned VM profile
+- `vm.json`: versioned VM profile, including optional external ISO and floppy A image paths
 - `disk.raw`: sparse virtual hard disk
 - `bochsrc`: generated Bochs configuration
 - `bochsrc.custom`: optional user-edited Bochs configuration, active in preference to the generated file
@@ -35,7 +35,7 @@ The manager owns `~/.local/share/chromeos-vm-studio/<vm-name>`:
 - `logs/launcher.log`: launcher stdout/stderr
 - `runtime/bochs.pid`: process identity while running
 
-The app generates Bochs syntax using quoted local file paths, validates resource bounds, and invokes the Bochs executable with an argument array (never a shell command). The native configuration editor can save a custom bochsrc override; static checks cover required directives and common formatting/resource mistakes, but Bochs itself remains the final parser at boot. While a custom override exists, profile and ISO edits are blocked until the user restores the generated config. Process identity tracking records whichever config file is actually active. The guest display is the actual Bochs GUI window, not a simulated canvas inside the manager.
+The app generates Bochs syntax using quoted local file paths, validates resource bounds, and invokes the Bochs executable with an argument array (never a shell command). An optional floppy A image is attached with Bochs' `floppya: image=..., status=inserted` syntax, write-protected by default, and placed first in the boot order. The image must match a standard Bochs floppy capacity; the original user-selected image is not copied or modified by the app.  The native configuration editor can save a custom bochsrc override; static checks cover required directives and common formatting/resource mistakes, but Bochs itself remains the final parser at boot. While a custom override exists, profile and ISO edits are blocked until the user restores the generated config. Process identity tracking records whichever config file is actually active. The guest display is the actual Bochs GUI window, not a simulated canvas inside the manager.
 
 ## Backend choice
 
@@ -53,6 +53,7 @@ crosvm is a VMM using Linux KVM and virtio devices, not a general PC chipset emu
 - Refuse VM directories that are symlinks or resolve outside the configured storage root.
 - Before handing a disk to Bochs, require a regular non-symlink file, a single hard link, and the exact byte length implied by the VM's CHS geometry. This avoids opening redirected, shared, truncated, or replaced files.
 - A custom `ata0-master` directive must still point to the VM's managed `disk.raw`; custom device settings cannot redirect the primary guest disk outside private storage.
+- When a floppy A image is stored in the VM profile, a custom `floppya` directive must continue to reference that exact attached image; the generated configuration marks it write-protected.
 - Never delete a VM disk while its emulator is running.
 - Ask for explicit confirmation before permanent disk deletion.
 - Do not bundle proprietary guest installation media or ROM/BIOS dumps.
