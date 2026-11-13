@@ -74,7 +74,7 @@ jobs:
               if missing or ">>PANIC<<" in log_text:
                   raise SystemExit(
                       "Bochs config/parser smoke failed; missing log markers: "
-                      + repr(missing) + "\\n" + result.stdout[-3000:]
+                      + repr(missing) + "\n" + result.stdout[-3000:]
                       + result.stderr[-3000:] + log_text[-8000:]
                   )
               print(
@@ -101,7 +101,7 @@ jobs:
               config = manager.render_bochsrc(vm)
               assert 'floppya: image="' + str(floppy.resolve()) + '", status=inserted, write_protected=1' in config
               assert "boot: floppy, disk" in config
-              config += "\\nspeaker: enabled=0\\n"
+              config += "\nspeaker: enabled=0\n"
               config_path = manager.vm_path(vm.name) / "bochsrc.floppy-ci"
               config_path.write_text(config, encoding="utf-8")
               result = subprocess.run(
