@@ -83,6 +83,48 @@ jobs:
               )
           PY
 
+
+      - name: Parse and initialize an attached floppy image with real Bochs
+        run: |
+          PYTHONPATH=src python3 - <<'PY'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from chromeos_vm.manager import VMManager
+
+          with tempfile.TemporaryDirectory() as temp:
+              manager = VMManager(Path(temp) / "vms")
+              floppy = Path(temp) / "boot-1440k.img"
+              floppy.write_bytes(bytes(1_440 * 1024))
+              vm = manager.create("floppy-parser-smoke", memory_mib=128, disk_gib=1)
+              vm = manager.set_floppy_a(vm.name, floppy)
+              config = manager.render_bochsrc(vm)
+              assert 'floppya: image="' + str(floppy.resolve()) + '", status=inserted, write_protected=1' in config
+              assert "boot: floppy, disk" in config
+              config += "\\nspeaker: enabled=0\\n"
+              config_path = manager.vm_path(vm.name) / "bochsrc.floppy-ci"
+              config_path.write_text(config, encoding="utf-8")
+              result = subprocess.run(
+                  ["xvfb-run", "-a", "env", "SDL_VIDEODRIVER=x11",
+                   "bochs", "-benchmark", "1", "-q", "-f", str(config_path)],
+                  capture_output=True, text=True, timeout=45, check=False,
+              )
+              log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+              log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+              required_markers = ("VGABios", "ata0-0:", "cpu loop quit")
+              missing = [marker for marker in required_markers if marker not in log_text]
+              if missing or ">>PANIC<<" in log_text:
+                  raise SystemExit(
+                      "Bochs floppy configuration smoke failed; missing markers: "
+                      + repr(missing) + "\\n" + result.stdout[-3000:]
+                      + result.stderr[-3000:] + log_text[-8000:]
+                  )
+              print(
+                  "Bochs accepted the floppy A image, initialized BIOS/VGA/IDE, "
+                  f"and completed its bounded benchmark (exit status {result.returncode})."
+              )
+          PY
+
   native-gui-smoke:
     runs-on: ubuntu-latest
     steps:
