@@ -103,6 +103,35 @@ class UpdateFlowTests(unittest.TestCase):
             self.assertEqual(result.status, "current")
             apply.assert_not_called()
 
+    def test_app_update_leaves_vm_profiles_and_disks_untouched(self):
+        sha = "f" * 40
+        payload = make_archive([
+            ("project/", None),
+            ("project/pyproject.toml", "[project]\nname='chromeos-vm-studio'\n"),
+            ("project/src/", None),
+            ("project/src/chromeos_vm/", None),
+            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.4'\n"),
+        ])
+        with tempfile.TemporaryDirectory() as temp:
+            vm_dir = Path(temp) / "vms" / "dos-test"
+            vm_dir.mkdir(parents=True)
+            disk = vm_dir / "disk.raw"
+            profile = vm_dir / "vm.json"
+            disk.write_bytes(b"guest disk data must survive")
+            profile.write_text('{"name":"dos-test"}\n', encoding="utf-8")
+            disk_before = disk.read_bytes()
+            profile_before = profile.read_bytes()
+
+            fake_result = type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+            with patch.object(updater, "_request", return_value=payload):
+                with patch.object(updater.subprocess, "run", return_value=fake_result) as install:
+                    updater.apply_update(sha)
+
+            install.assert_called_once()
+            self.assertIn("pip", install.call_args.args[0])
+            self.assertEqual(disk.read_bytes(), disk_before)
+            self.assertEqual(profile.read_bytes(), profile_before)
+
     def test_failed_install_does_not_advance_marker(self):
         old = "c" * 40
         new = "d" * 40
