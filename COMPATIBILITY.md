@@ -10,6 +10,7 @@
 | Updates | Background commit-based updater from this repository's `main` branch |
 | Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
 | Guest display | Bochs's own GUI window |
+| Floppy A | Optional raw floppy images at standard Bochs capacities; write-protected by default |
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
 | Managed disk safety | Pre-boot private-path, regular-file, link-count, and exact-size checks |
 
@@ -24,6 +25,12 @@ Nested virtualization has varied by ChromeOS device/kernel and should not be ass
 Bochs models a broad set of x86 CPUs and standard PC devices, including VGA, IDE hard disks, ATAPI CD-ROM, keyboard, mouse, sound and selected network adapters depending on build options. Bochs supports x86-64 extensions, but that does not guarantee every modern OS installer or peripheral works with every Bochs configuration.
 
 Software instruction emulation is expensive. Start with modest guest RAM and older/lightweight guest systems. Performance will be limited on low-power Chromebook CPUs. Windows 10/11 is not a target performance promise.
+
+## Floppy media
+
+The manager supports an optional floppy A image using Bochs' documented `floppya: image="...", status=inserted` directive. It accepts exact image sizes corresponding to 160K, 180K, 320K, 360K, 720K, 1.2M, 1.44M, and 2.88M media. The generated configuration marks the image write-protected and tries floppy before CD/DVD and hard disk. The original image is referenced in place and is not copied or modified by the manager. See the [Bochs configuration manual](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html) for the upstream syntax.
+
+CI checks that the generated floppy configuration is parsed and initialized by the Debian 13 Bochs package. This is not proof that a particular floppy image contains a bootable operating system.
 
 ## Configuration validation
 
