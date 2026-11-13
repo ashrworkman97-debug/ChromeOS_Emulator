@@ -95,9 +95,9 @@ def validate_bochsrc_text(text: str) -> None:
             raise VMError(f"Line {number}: '{directive}' has no value.")
         if value.count('"') % 2:
             raise VMError(f"Line {number}: unmatched double quote.")
-        if directive in BOCHSRC_REQUIRED:
+        if directive in BOCHSRC_REQUIRED or directive == "floppya":
             if directive in seen:
-                raise VMError(f"Line {number}: duplicate required directive '{directive}'.")
+                raise VMError(f"Line {number}: duplicate directive '{directive}'.")
             seen.add(directive)
             values[directive] = value
 
@@ -129,6 +129,13 @@ def validate_bochsrc_text(text: str) -> None:
     if not values["display_library"] or not values["vga"] or not values["boot"] or not values["log"]:
         raise VMError("Display, VGA, boot, and log directives must have values.")
 
+    if "floppya" in values:
+        floppy = values["floppya"]
+        if not re.search(r'\bimage\s*=\s*"[^"]+"', floppy):
+            raise VMError("The 'floppya' directive must use a quoted image= path.")
+        if not re.search(r'\bstatus\s*=\s*inserted\b', floppy):
+            raise VMError("The 'floppya' image must have status=inserted.")
+
 
 def disk_geometry(disk_gib: int) -> tuple[int, int, int, int]:
     """Return BIOS-friendly CHS geometry and its exact flat-image byte size.
@@ -154,6 +161,7 @@ class VMConfig:
     disk_gib: int
     disk_path: str
     iso_path: str | None = None
+    floppy_a_path: str | None = None
     cpu_ips: int = 10_000_000
     backend: str = "bochs"
     disk_format: str = "raw"
@@ -175,6 +183,8 @@ class VMConfig:
             raise VMError("The VM profile must contain a disk path.")
         if config.iso_path is not None and not isinstance(config.iso_path, str):
             raise VMError("The VM profile contains an invalid ISO path.")
+        if config.floppy_a_path is not None and not isinstance(config.floppy_a_path, str):
+            raise VMError("The VM profile contains an invalid floppy image path.")
         return config
 
 
@@ -262,6 +272,37 @@ class VMManager:
         self._save(updated)
         return updated
 
+    @staticmethod
+    def _validate_floppy(image: Path | str) -> str:
+        """Accept only standard raw floppy image capacities supported by Bochs."""
+        path = Path(image).expanduser().resolve()
+        if not path.is_file() or not os.access(path, os.R_OK):
+            raise VMError(f"Floppy image is not a readable file: {path}")
+        bochs_quote(path)
+        supported_sizes = {
+            160 * 1024, 180 * 1024, 320 * 1024, 360 * 1024,
+            720 * 1024, 1_200 * 1024, 1_440 * 1024, 2_880 * 1024,
+        }
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            raise VMError(f"Could not inspect the floppy image: {exc}") from exc
+        if size not in supported_sizes:
+            allowed = "160K, 180K, 320K, 360K, 720K, 1.2M, 1.44M, or 2.88M"
+            raise VMError(f"Bochs floppy images must have a supported exact size ({allowed}); this image is {size:,} bytes.")
+        return str(path)
+
+    def set_floppy_a(self, name: str, image: Path | str | None) -> VMConfig:
+        cfg = self.load(name)
+        if self.is_running(name):
+            raise VMError("Stop the VM before changing floppy A media.")
+        if self.custom_bochsrc_path(name).exists():
+            raise VMError("Restore the generated Bochs config before changing floppy media; the custom config may reference another image.")
+        image_path = self._validate_floppy(image) if image else None
+        updated = VMConfig(**{**asdict(cfg), "floppy_a_path": image_path})
+        self._save(updated)
+        return updated
+
     def read_bochsrc(self, name: str) -> str:
         self.load(name)
         custom = self.custom_bochsrc_path(name)
@@ -285,7 +326,7 @@ class VMManager:
 
     def validate_bochsrc_for_vm(self, name: str, text: str) -> None:
         """Validate the custom config without allowing it to redirect the managed disk."""
-        self.load(name)
+        cfg = self.load(name)
         validate_bochsrc_text(text)
         disk_value = None
         for raw_line in text.splitlines():
@@ -309,6 +350,33 @@ class VMManager:
                 "The ata0-master disk must remain at this VM's private disk.raw path. "
                 "Use the storage tools to manage guest disks; custom configs cannot redirect it."
             )
+
+        if cfg.floppy_a_path:
+            floppy_value = None
+            for raw_line in text.splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or ":" not in line:
+                    continue
+                directive, value = (part.strip() for part in line.split(":", 1))
+                if directive == "floppya":
+                    match = re.search(r'\bimage\s*=\s*"([^"]+)"', value)
+                    if match:
+                        floppy_value = match.group(1).replace("\\\\", "\\")
+                    break
+            if not floppy_value or Path(floppy_value).resolve() != Path(cfg.floppy_a_path).resolve():
+                raise VMError(
+                    "The floppya image must remain the floppy A image attached in this VM's profile. "
+                    "Use the media controls to change it."
+                )
+
+    def validate_floppy_image(self, name: str, config: VMConfig | None = None) -> Path | None:
+        cfg = config or self.load(name)
+        if cfg.floppy_a_path is None:
+            return None
+        resolved = Path(self._validate_floppy(cfg.floppy_a_path))
+        if str(resolved) != cfg.floppy_a_path:
+            raise VMError("The attached floppy image path changed after it was selected; reattach it before booting.")
+        return resolved
 
     def validate_disk_image(self, name: str, config: VMConfig | None = None) -> Path:
         """Refuse missing, redirected, linked, or truncated managed disk images."""
@@ -456,11 +524,18 @@ class VMManager:
         cylinders, heads, sectors, _image_bytes = disk_geometry(cfg.disk_gib)
         lines.append('ata0-master: type=disk, mode=flat, path=' + bochs_quote(cfg.disk_path) +
                      f", cylinders={cylinders}, heads={heads}, spt={sectors}, translation=auto")
+        if cfg.floppy_a_path:
+            lines.append(
+                "floppya: image=" + bochs_quote(cfg.floppy_a_path)
+                + ", status=inserted, write_protected=1"
+            )
         if cfg.iso_path:
             lines.append('ata0-slave: type=cdrom, path=' + bochs_quote(cfg.iso_path) + ", status=inserted")
-            lines.append("boot: cdrom, disk")
-        else:
-            lines.append("boot: disk")
+        boot_order = ["floppy"] if cfg.floppy_a_path else []
+        if cfg.iso_path:
+            boot_order.append("cdrom")
+        boot_order.append("disk")
+        lines.append("boot: " + ", ".join(boot_order))
         lines.extend([
             "log: " + bochs_quote((self.vm_path(cfg.name) / "logs/bochs.log").resolve()),
             "panic: action=ask",
@@ -598,6 +673,7 @@ class VMManager:
         if not executable:
             raise VMError("Bochs was not found. Install it with: sudo apt install bochs bochs-sdl")
         self.validate_disk_image(name, cfg)
+        self.validate_floppy_image(name, cfg)
         self.write_bochsrc(cfg)
         config_file = self.active_bochsrc_path(name).resolve()
         try:
