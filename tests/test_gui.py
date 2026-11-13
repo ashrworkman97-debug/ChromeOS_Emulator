@@ -35,5 +35,28 @@ class BackgroundUpdaterTests(unittest.TestCase):
                     finish.assert_called_once_with(result, False)
 
 
+class FloppyMediaUITests(unittest.TestCase):
+    def setUp(self):
+        self.app = ChromeOSVMStudio.__new__(ChromeOSVMStudio)
+        self.app.root = Mock()
+        self.app.manager = Mock()
+        self.app.status = Mock()
+        self.app.selected_name = Mock(return_value="dos-test")
+        self.app.refresh = Mock()
+
+    def test_attach_floppy_a_uses_native_file_picker_and_manager(self):
+        with patch("chromeos_vm.gui.filedialog.askopenfilename", return_value="/media/boot.img"):
+            self.app.attach_floppy_a()
+        self.app.manager.set_floppy_a.assert_called_once_with("dos-test", "/media/boot.img")
+        self.app.refresh.assert_called_once()
+        self.app.status.set.assert_called_once()
+        self.assertIn("write-protected", self.app.status.set.call_args.args[0])
+
+    def test_eject_floppy_a_clears_profile_media(self):
+        self.app.eject_floppy_a()
+        self.app.manager.set_floppy_a.assert_called_once_with("dos-test", None)
+        self.app.refresh.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
