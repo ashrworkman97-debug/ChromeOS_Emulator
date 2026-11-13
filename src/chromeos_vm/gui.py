@@ -16,8 +16,10 @@ class ChromeOSVMStudio:
         self.root = root
         self.manager = manager or VMManager()
         root.title("ChromeOS VM Studio")
-        root.geometry("980x620")
-        root.minsize(780, 520)
+        # The media controls add two device actions; leave enough room for
+        # the full action panel on a typical Chromebook Linux-app window.
+        root.geometry("1020x720")
+        root.minsize(820, 640)
         self._build()
         self.refresh()
         # Check for updates off the UI thread; the updater throttles automatic
