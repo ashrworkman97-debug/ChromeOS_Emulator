@@ -121,12 +121,12 @@ class ChromeOSVMStudio:
         self.table.heading("state", text="STATUS")
         self.table.heading("ram", text="MEMORY")
         self.table.heading("disk", text="DISK")
-        self.table.heading("media", text="INSTALL MEDIA")
+        self.table.heading("media", text="CD/DVD · FLOPPY A")
         self.table.column("#0", width=190, minwidth=130)
         self.table.column("state", width=86, minwidth=78, anchor="center")
         self.table.column("ram", width=94, minwidth=80, anchor="center")
         self.table.column("disk", width=88, minwidth=76, anchor="center")
-        self.table.column("media", width=190, minwidth=110)
+        self.table.column("media", width=250, minwidth=140)
         scrollbar = ttk.Scrollbar(list_panel, orient="vertical", command=self.table.yview)
         self.table.configure(yscrollcommand=scrollbar.set)
         self.table.pack(side="left", fill="both", expand=True)
@@ -152,6 +152,10 @@ class ChromeOSVMStudio:
                   style="PanelHint.TLabel").pack(anchor="w", pady=(0, 5))
         ttk.Button(action_panel, text="Attach ISO…", style="Action.TButton",
                    command=self.attach_iso).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Attach floppy A…", style="Action.TButton",
+                   command=self.attach_floppy_a).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Eject floppy A", style="Action.TButton",
+                   command=self.eject_floppy_a).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Edit VM…", style="Action.TButton",
                    command=self.edit_vm).pack(fill="x", pady=3)
         self.config_button = ttk.Button(action_panel, text="Bochs config…", style="Action.TButton",
@@ -235,7 +239,12 @@ class ChromeOSVMStudio:
             for cfg in self.manager.list_vms():
                 running = self.manager.is_running(cfg.name)
                 state = "Running" if running else "Stopped"
-                media = Path(cfg.iso_path).name if cfg.iso_path else "None"
+                media_items = []
+                if cfg.iso_path:
+                    media_items.append("CD: " + Path(cfg.iso_path).name)
+                if cfg.floppy_a_path:
+                    media_items.append("A: " + Path(cfg.floppy_a_path).name)
+                media = " · ".join(media_items) if media_items else "None"
                 self.table.insert("", "end", iid=cfg.name, text=cfg.name,
                                   values=(state, f"{cfg.memory_mib} MiB", f"{cfg.disk_gib} GiB", media),
                                   tags=("running" if running else "stopped",))
@@ -494,6 +503,39 @@ class ChromeOSVMStudio:
             self.refresh()
         except VMError as exc:
             messagebox.showerror("Could not attach image", str(exc), parent=self.root)
+
+    def attach_floppy_a(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            filetypes=[("Floppy images", "*.img *.ima *.flp *.bin"), ("All files", "*")],
+        )
+        if not path:
+            return
+        try:
+            self.manager.set_floppy_a(name, path)
+            self._status(
+                f"Attached {Path(path).name} as floppy A in {name}. "
+                "It is write-protected by default; boot order now tries floppy first."
+            )
+            self.refresh()
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not attach floppy image", str(exc), parent=self.root)
+
+    def eject_floppy_a(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        try:
+            self.manager.set_floppy_a(name, None)
+            self._status(f"Ejected floppy A from {name}. The next boot will use its CD/DVD or hard disk.")
+            self.refresh()
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not eject floppy image", str(exc), parent=self.root)
 
     def open_folder(self) -> None:
         name = self.selected_name()
