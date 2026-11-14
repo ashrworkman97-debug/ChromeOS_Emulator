@@ -560,7 +560,7 @@ class ChromeOSVMStudio:
             self.manager.set_floppy_b(name, path)
             self._status(
                 f"Attached {Path(path).name} as floppy B in {name}. "
-                "It is write-protected by default; boot order now tries floppy first."
+                "It is write-protected by default and available as the secondary floppy drive; boot priority remains on A."
             )
             self.refresh()
         except (VMError, OSError) as exc:
