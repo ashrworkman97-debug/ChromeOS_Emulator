@@ -35,6 +35,29 @@ class BackgroundUpdaterTests(unittest.TestCase):
                     finish.assert_called_once_with(result, False)
 
 
+class FloppyBMediaUITests(unittest.TestCase):
+    def setUp(self):
+        self.app = ChromeOSVMStudio.__new__(ChromeOSVMStudio)
+        self.app.root = Mock()
+        self.app.manager = Mock()
+        self.app.status = Mock()
+        self.app.selected_name = Mock(return_value="dos-test")
+        self.app.refresh = Mock()
+
+    def test_attach_floppy_b_uses_native_file_picker_and_manager(self):
+        with patch("chromeos_vm.gui.filedialog.askopenfilename", return_value="/media/data.img"):
+            self.app.attach_floppy_b()
+        self.app.manager.set_floppy_b.assert_called_once_with("dos-test", "/media/data.img")
+        self.app.refresh.assert_called_once()
+        self.app.status.set.assert_called_once()
+        self.assertIn("secondary floppy drive", self.app.status.set.call_args.args[0])
+
+    def test_eject_floppy_b_clears_profile_media(self):
+        self.app.eject_floppy_b()
+        self.app.manager.set_floppy_b.assert_called_once_with("dos-test", None)
+        self.app.refresh.assert_called_once()
+
+
 class FloppyMediaUITests(unittest.TestCase):
     def setUp(self):
         self.app = ChromeOSVMStudio.__new__(ChromeOSVMStudio)
