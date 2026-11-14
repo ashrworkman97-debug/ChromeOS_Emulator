@@ -18,8 +18,8 @@ class ChromeOSVMStudio:
         root.title("ChromeOS VM Studio")
         # The media controls add two device actions; leave enough room for
         # the full action panel on a typical Chromebook Linux-app window.
-        root.geometry("1020x720")
-        root.minsize(820, 640)
+        root.geometry("1020x760")
+        root.minsize(820, 680)
         self._build()
         self.refresh()
         # Check for updates off the UI thread; the updater throttles automatic
@@ -123,7 +123,7 @@ class ChromeOSVMStudio:
         self.table.heading("state", text="STATUS")
         self.table.heading("ram", text="MEMORY")
         self.table.heading("disk", text="DISK")
-        self.table.heading("media", text="CD/DVD · FLOPPY A")
+        self.table.heading("media", text="CD/DVD · FLOPPY A/B")
         self.table.column("#0", width=190, minwidth=130)
         self.table.column("state", width=86, minwidth=78, anchor="center")
         self.table.column("ram", width=94, minwidth=80, anchor="center")
@@ -158,6 +158,10 @@ class ChromeOSVMStudio:
                    command=self.attach_floppy_a).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Eject floppy A", style="Action.TButton",
                    command=self.eject_floppy_a).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Attach floppy B…", style="Action.TButton",
+                   command=self.attach_floppy_b).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Eject floppy B", style="Action.TButton",
+                   command=self.eject_floppy_b).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Edit VM…", style="Action.TButton",
                    command=self.edit_vm).pack(fill="x", pady=3)
         self.config_button = ttk.Button(action_panel, text="Bochs config…", style="Action.TButton",
@@ -246,6 +250,8 @@ class ChromeOSVMStudio:
                     media_items.append("CD: " + Path(cfg.iso_path).name)
                 if cfg.floppy_a_path:
                     media_items.append("A: " + Path(cfg.floppy_a_path).name)
+                if cfg.floppy_b_path:
+                    media_items.append("B: " + Path(cfg.floppy_b_path).name)
                 media = " · ".join(media_items) if media_items else "None"
                 self.table.insert("", "end", iid=cfg.name, text=cfg.name,
                                   values=(state, f"{cfg.memory_mib} MiB", f"{cfg.disk_gib} GiB", media),
@@ -535,6 +541,39 @@ class ChromeOSVMStudio:
         try:
             self.manager.set_floppy_a(name, None)
             self._status(f"Ejected floppy A from {name}. The next boot will use its CD/DVD or hard disk.")
+            self.refresh()
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not eject floppy image", str(exc), parent=self.root)
+
+    def attach_floppy_b(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            filetypes=[("Floppy images", "*.img *.ima *.flp *.bin"), ("All files", "*")],
+        )
+        if not path:
+            return
+        try:
+            self.manager.set_floppy_b(name, path)
+            self._status(
+                f"Attached {Path(path).name} as floppy B in {name}. "
+                "It is write-protected by default; boot order now tries floppy first."
+            )
+            self.refresh()
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not attach floppy image", str(exc), parent=self.root)
+
+    def eject_floppy_b(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        try:
+            self.manager.set_floppy_b(name, None)
+            self._status(f"Ejected floppy B from {name}. The next boot will use its CD/DVD or hard disk.")
             self.refresh()
         except (VMError, OSError) as exc:
             messagebox.showerror("Could not eject floppy image", str(exc), parent=self.root)
