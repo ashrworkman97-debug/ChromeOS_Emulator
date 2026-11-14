@@ -28,7 +28,7 @@ Software instruction emulation is expensive. Start with modest guest RAM and old
 
 ## Floppy media
 
-The manager supports optional floppy A and B images using Bochs' documented `floppya` and `floppyb` directives. Both accept exact image sizes corresponding to 160K, 180K, 320K, 360K, 720K, 1.2M, 1.44M, and 2.88M media. Generated configurations mark both images write-protected. BIOS floppy boot targets drive A; drive B is secondary media and does not replace A in the boot sequence. The original images are referenced in place and are not copied or modified by the manager. See the [Bochs configuration manual](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html) for the upstream syntax.
+The manager supports optional floppy A and B images using Bochs' documented `floppya` and `floppyb` directives. Both accept exact image sizes corresponding to 160K, 180K, 320K, 360K, 720K, 1.2M, 1.44M, and 2.88M media. Generated configurations mark both images write-protected, and VM-aware static validation rejects custom overrides that disable this protection. BIOS floppy boot targets drive A; drive B is secondary media and does not replace A in the boot sequence. The original images are referenced in place and are not copied or modified by the manager. See the [Bochs configuration manual](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html) for the upstream syntax.
 
 CI checks that generated configurations with both floppy drives are parsed and initialized by the Debian 13 Bochs package. This is not proof that a particular floppy image contains a bootable operating system.
 
