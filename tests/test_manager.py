@@ -412,7 +412,7 @@ class ManagerTests(unittest.TestCase):
             lines[index] = lines[index].replace("write_protected=1", "write_protected=0")
             with self.subTest(directive=directive):
                 with self.assertRaisesRegex(VMError, "must remain write-protected"):
-                    self.manager.save_custom_bochsrc(cfg.name, "\\n".join(lines))
+                    self.manager.save_custom_bochsrc(cfg.name, "\n".join(lines))
         self.assertFalse(self.manager.custom_bochsrc_path(cfg.name).exists())
 
     def test_boot_rejects_floppy_b_image_removed_after_attachment(self):
