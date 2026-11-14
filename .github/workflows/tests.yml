@@ -84,7 +84,7 @@ jobs:
           PY
 
 
-      - name: Parse and initialize an attached floppy image with real Bochs
+      - name: Parse and initialize floppy A and B images with real Bochs
         run: |
           PYTHONPATH=src python3 - <<'PY'
           import subprocess
@@ -94,12 +94,16 @@ jobs:
 
           with tempfile.TemporaryDirectory() as temp:
               manager = VMManager(Path(temp) / "vms")
-              floppy = Path(temp) / "boot-1440k.img"
-              floppy.write_bytes(bytes(1_440 * 1024))
+              floppy_a = Path(temp) / "boot-1440k.img"
+              floppy_b = Path(temp) / "data-720k.img"
+              floppy_a.write_bytes(bytes(1_440 * 1024))
+              floppy_b.write_bytes(bytes(720 * 1024))
               vm = manager.create("floppy-parser-smoke", memory_mib=128, disk_gib=1)
-              vm = manager.set_floppy_a(vm.name, floppy)
+              vm = manager.set_floppy_a(vm.name, floppy_a)
+              vm = manager.set_floppy_b(vm.name, floppy_b)
               config = manager.render_bochsrc(vm)
-              assert 'floppya: image="' + str(floppy.resolve()) + '", status=inserted, write_protected=1' in config
+              assert 'floppya: image="' + str(floppy_a.resolve()) + '", status=inserted, write_protected=1' in config
+              assert 'floppyb: image="' + str(floppy_b.resolve()) + '", status=inserted, write_protected=1' in config
               assert "boot: floppy, disk" in config
               config += "\nspeaker: enabled=0\n"
               config_path = manager.vm_path(vm.name) / "bochsrc.floppy-ci"
@@ -120,7 +124,7 @@ jobs:
                       + result.stderr[-3000:] + log_text[-8000:]
                   )
               print(
-                  "Bochs accepted the floppy A image, initialized BIOS/VGA/IDE, "
+                  "Bochs accepted floppy A and B images, initialized BIOS/VGA/IDE, "
                   f"and completed its bounded benchmark (exit status {result.returncode})."
               )
           PY
