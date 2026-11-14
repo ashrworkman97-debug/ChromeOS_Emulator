@@ -394,6 +394,27 @@ class ManagerTests(unittest.TestCase):
             self.manager.save_custom_bochsrc(cfg.name, redirected)
         self.assertFalse(self.manager.custom_bochsrc_path(cfg.name).exists())
 
+    def test_custom_config_cannot_disable_write_protection_for_either_floppy(self):
+        cfg = self.manager.create("floppy-write-protection")
+        floppy_a = self.root / "protected-a.img"
+        floppy_b = self.root / "protected-b.img"
+        floppy_a.write_bytes(b"\\0" * (1_440 * 1024))
+        floppy_b.write_bytes(b"\\0" * (720 * 1024))
+        cfg = self.manager.set_floppy_a(cfg.name, floppy_a)
+        cfg = self.manager.set_floppy_b(cfg.name, floppy_b)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(cfg)
+        for directive in ("floppya:", "floppyb:"):
+            lines = generated.splitlines()
+            index = next(i for i, line in enumerate(lines) if line.startswith(directive))
+            lines[index] = lines[index].replace("write_protected=1", "write_protected=0")
+            with self.subTest(directive=directive):
+                with self.assertRaisesRegex(VMError, "must remain write-protected"):
+                    self.manager.save_custom_bochsrc(cfg.name, "\\n".join(lines))
+        self.assertFalse(self.manager.custom_bochsrc_path(cfg.name).exists())
+
     def test_boot_rejects_floppy_b_image_removed_after_attachment(self):
         cfg = self.manager.create("removed-floppy-b")
         floppy_b = self.root / "removed-b.img"
