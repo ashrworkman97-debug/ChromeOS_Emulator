@@ -53,7 +53,7 @@ crosvm is a VMM using Linux KVM and virtio devices, not a general PC chipset emu
 - Refuse VM directories that are symlinks or resolve outside the configured storage root.
 - Before handing a disk to Bochs, require a regular non-symlink file, a single hard link, and the exact byte length implied by the VM's CHS geometry. This avoids opening redirected, shared, truncated, or replaced files.
 - A custom `ata0-master` directive must still point to the VM's managed `disk.raw`; custom device settings cannot redirect the primary guest disk outside private storage.
-- When floppy A or B images are stored in the VM profile, custom `floppya` and `floppyb` directives must continue to reference those exact attached images; generated configurations mark both write-protected.
+- When floppy A or B images are stored in the VM profile, custom `floppya` and `floppyb` directives must continue to reference those exact attached images and retain `write_protected=1`; the static validator rejects attempts to make managed media writable.
 - Never delete a VM disk while its emulator is running.
 - Ask for explicit confirmation before permanent disk deletion.
 - Do not bundle proprietary guest installation media or ROM/BIOS dumps.
