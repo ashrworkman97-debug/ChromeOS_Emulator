@@ -129,12 +129,15 @@ def validate_bochsrc_text(text: str) -> None:
     if not values["display_library"] or not values["vga"] or not values["boot"] or not values["log"]:
         raise VMError("Display, VGA, boot, and log directives must have values.")
 
-    if "floppya" in values:
-        floppy = values["floppya"]
-        if not re.search(r'\bimage\s*=\s*"[^"]+"', floppy):
-            raise VMError("The 'floppya' directive must use a quoted image= path.")
-        if not re.search(r'\bstatus\s*=\s*inserted\b', floppy):
-            raise VMError("The 'floppya' image must have status=inserted.")
+    for floppy_directive in ("floppya", "floppyb"):
+        if floppy_directive in values:
+            floppy = values[floppy_directive]
+            if not re.search(r'\bimage\s*=\s*"[^"]+"', floppy):
+                raise VMError(f"The '{floppy_directive}' directive must use a quoted image= path.")
+            if not re.search(r'\bstatus\s*=\s*inserted\b', floppy):
+                raise VMError(f"The '{floppy_directive}' image must have status=inserted.")
+            if not re.search(r'\bwrite_protected\s*=\s*1\b', floppy):
+                raise VMError(f"The '{floppy_directive}' image must remain write-protected in managed VM profiles.")
 
 
 def disk_geometry(disk_gib: int) -> tuple[int, int, int, int]:
@@ -416,7 +419,7 @@ class VMManager:
             return None
         resolved = Path(self._validate_floppy(cfg.floppy_b_path))
         if str(resolved) != cfg.floppy_b_path:
-            raise VMError("The attached floppy image path changed after it was selected; reattach it before booting.")
+            raise VMError("The attached floppy B image path changed after it was selected; reattach it before booting.")
         return resolved
 
     def validate_disk_image(self, name: str, config: VMConfig | None = None) -> Path:
