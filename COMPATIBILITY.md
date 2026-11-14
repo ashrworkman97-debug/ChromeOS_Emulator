@@ -10,7 +10,7 @@
 | Updates | Background commit-based updater from this repository's `main` branch |
 | Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
 | Guest display | Bochs's own GUI window |
-| Floppy A | Optional raw floppy images at standard Bochs capacities; write-protected by default |
+| Floppy A/B | Optional raw floppy images at standard Bochs capacities; both write-protected by default; BIOS floppy boot targets A |
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
 | Managed disk safety | Pre-boot private-path, regular-file, link-count, and exact-size checks |
 
@@ -28,9 +28,9 @@ Software instruction emulation is expensive. Start with modest guest RAM and old
 
 ## Floppy media
 
-The manager supports an optional floppy A image using Bochs' documented `floppya: image="...", status=inserted` directive. It accepts exact image sizes corresponding to 160K, 180K, 320K, 360K, 720K, 1.2M, 1.44M, and 2.88M media. The generated configuration marks the image write-protected and tries floppy before CD/DVD and hard disk. The original image is referenced in place and is not copied or modified by the manager. See the [Bochs configuration manual](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html) for the upstream syntax.
+The manager supports optional floppy A and B images using Bochs' documented `floppya` and `floppyb` directives. Both accept exact image sizes corresponding to 160K, 180K, 320K, 360K, 720K, 1.2M, 1.44M, and 2.88M media. Generated configurations mark both images write-protected. BIOS floppy boot targets drive A; drive B is secondary media and does not replace A in the boot sequence. The original images are referenced in place and are not copied or modified by the manager. See the [Bochs configuration manual](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html) for the upstream syntax.
 
-CI checks that the generated floppy configuration is parsed and initialized by the Debian 13 Bochs package. This is not proof that a particular floppy image contains a bootable operating system.
+CI checks that generated configurations with both floppy drives are parsed and initialized by the Debian 13 Bochs package. This is not proof that a particular floppy image contains a bootable operating system.
 
 ## Configuration validation
 
