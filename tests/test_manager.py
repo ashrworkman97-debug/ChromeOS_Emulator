@@ -329,6 +329,81 @@ class ManagerTests(unittest.TestCase):
         self.manager.validate_bochsrc_for_vm(cfg.name, generated)
         self.assertEqual(self.manager.validate_floppy_image(cfg.name), floppy.resolve())
 
+    def test_floppy_b_attaches_without_changing_floppy_a_boot_priority(self):
+        cfg = self.manager.create("floppy-b-data")
+        floppy_b = self.root / "dos-data.img"
+        floppy_b.write_bytes(b"\\0" * (1_440 * 1024))
+        updated = self.manager.set_floppy_b(cfg.name, floppy_b)
+        self.assertEqual(updated.floppy_b_path, str(floppy_b.resolve()))
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(updated)
+        self.assertIn(
+            f'floppyb: image="{floppy_b.resolve()}", status=inserted, write_protected=1',
+            generated,
+        )
+        self.assertIn("boot: disk", generated)
+        validate_bochsrc_text(generated)
+        self.manager.validate_bochsrc_for_vm(cfg.name, generated)
+        self.assertEqual(self.manager.validate_floppy_b_image(cfg.name), floppy_b.resolve())
+
+    def test_floppy_a_and_b_can_be_attached_together(self):
+        cfg = self.manager.create("two-floppies")
+        floppy_a = self.root / "disk-a.img"
+        floppy_b = self.root / "disk-b.img"
+        floppy_a.write_bytes(b"\\0" * (1_440 * 1024))
+        floppy_b.write_bytes(b"\\0" * (720 * 1024))
+        cfg = self.manager.set_floppy_a(cfg.name, floppy_a)
+        cfg = self.manager.set_floppy_b(cfg.name, floppy_b)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(cfg)
+        self.assertIn(f'floppya: image="{floppy_a.resolve()}"', generated)
+        self.assertIn(f'floppyb: image="{floppy_b.resolve()}"', generated)
+        self.assertIn("boot: floppy, disk", generated)
+        self.manager.validate_bochsrc_for_vm(cfg.name, generated)
+
+    def test_floppy_b_rejects_unsupported_sizes_and_missing_files(self):
+        cfg = self.manager.create("bad-floppy-b")
+        invalid = self.root / "not-a-floppy-b.img"
+        invalid.write_bytes(b"invalid")
+        with self.assertRaisesRegex(VMError, "supported exact size"):
+            self.manager.set_floppy_b(cfg.name, invalid)
+        with self.assertRaises(VMError):
+            self.manager.set_floppy_b(cfg.name, self.root / "missing-b.img")
+        self.assertIsNone(self.manager.load(cfg.name).floppy_b_path)
+
+    def test_custom_bochsrc_cannot_redirect_attached_floppy_b_image(self):
+        cfg = self.manager.create("floppy-b-custom-guard")
+        floppy_b = self.root / "original-b.img"
+        floppy_b.write_bytes(b"\\0" * (1_440 * 1024))
+        cfg = self.manager.set_floppy_b(cfg.name, floppy_b)
+        outside = self.root / "other-b.img"
+        outside.write_bytes(b"\\0" * (1_440 * 1024))
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(cfg)
+        redirected = generated.replace(
+            f'image="{floppy_b.resolve()}"',
+            f'image="{outside.resolve()}"',
+        )
+        with self.assertRaisesRegex(VMError, "floppyb image must remain"):
+            self.manager.save_custom_bochsrc(cfg.name, redirected)
+        self.assertFalse(self.manager.custom_bochsrc_path(cfg.name).exists())
+
+    def test_boot_rejects_floppy_b_image_removed_after_attachment(self):
+        cfg = self.manager.create("removed-floppy-b")
+        floppy_b = self.root / "removed-b.img"
+        floppy_b.write_bytes(b"\\0" * (1_440 * 1024))
+        self.manager.set_floppy_b(cfg.name, floppy_b)
+        floppy_b.unlink()
+        with patch.object(self.manager, "find_bochs", return_value="/usr/bin/true"):
+            with self.assertRaisesRegex(VMError, "not a readable file"):
+                self.manager.start(cfg.name)
+
     def test_floppy_boot_order_prefers_floppy_then_cdrom_then_disk(self):
         iso = self.root / "installer.iso"
         iso.write_bytes(b"test iso")
@@ -357,8 +432,10 @@ class ManagerTests(unittest.TestCase):
         cfg = self.manager.create("legacy-floppy-profile")
         raw = cfg.__dict__.copy()
         raw.pop("floppy_a_path")
+        raw.pop("floppy_b_path")
         loaded = VMConfig.from_dict(raw)
         self.assertIsNone(loaded.floppy_a_path)
+        self.assertIsNone(loaded.floppy_b_path)
 
     def test_custom_bochsrc_cannot_redirect_attached_floppy_image(self):
         cfg = self.manager.create("floppy-custom-guard")
