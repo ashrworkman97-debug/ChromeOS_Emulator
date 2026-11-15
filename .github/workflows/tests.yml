@@ -129,6 +129,45 @@ jobs:
               )
           PY
 
+      - name: Parse and initialize each exposed CPU model with real Bochs
+        run: |
+          PYTHONPATH=src python3 - <<'PY'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from chromeos_vm.manager import CPU_MODEL_LABELS, VMManager
+
+          with tempfile.TemporaryDirectory() as temp:
+              manager = VMManager(Path(temp) / "vms")
+              vm = manager.create("cpu-model-smoke", memory_mib=128, disk_gib=1)
+              base = manager.render_bochsrc(vm)
+              default_cpu = f"cpu: count=1, ips={vm.cpu_ips}, reset_on_triple_fault=1"
+              if default_cpu not in base:
+                  raise SystemExit("Could not find generated CPU directive to parameterize.")
+              for model in (name for name in CPU_MODEL_LABELS if name != "default"):
+                  config = base.replace(
+                      default_cpu,
+                      f"cpu: model={model}, count=1, ips={vm.cpu_ips}, reset_on_triple_fault=1",
+                      1,
+                  ) + "\nspeaker: enabled=0\n"
+                  config_path = manager.vm_path(vm.name) / f"bochsrc.cpu-{model}"
+                  config_path.write_text(config, encoding="utf-8")
+                  log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+                  log_path.unlink(missing_ok=True)
+                  result = subprocess.run(
+                      ["xvfb-run", "-a", "env", "SDL_VIDEODRIVER=x11",
+                       "bochs", "-benchmark", "1", "-q", "-f", str(config_path)],
+                      capture_output=True, text=True, timeout=45, check=False,
+                  )
+                  log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+                  if "cpu loop quit" not in log_text or ">>PANIC<<" in log_text:
+                      raise SystemExit(
+                          f"Bochs rejected CPU model {model} (exit {result.returncode}):\n"
+                          + result.stdout[-2000:] + result.stderr[-2000:] + log_text[-6000:]
+                      )
+                  print(f"Bochs CPU model initialized: {model}")
+          PY
+
   native-gui-smoke:
     runs-on: ubuntu-latest
     steps:

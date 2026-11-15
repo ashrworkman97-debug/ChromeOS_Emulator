@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -8,7 +9,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from chromeos_vm.manager import (
-    VMConfig, VMError, VMManager, bochs_quote, disk_geometry,
+    CPU_MODEL_LABELS, VMConfig, VMError, VMManager, bochs_quote, disk_geometry,
     validate_name, validate_resources, validate_bochsrc_text,
 )
 
@@ -88,6 +89,7 @@ class ManagerTests(unittest.TestCase):
                                        Path("/mock/VGABIOS-lgpl-latest")]):
             config = self.manager.render_bochsrc(cfg)
         self.assertIn("megs: 512", config)
+        self.assertEqual(cfg.cpu_model, "default")
         self.assertIn("display_library: sdl2", config)
         self.assertIn(f"cylinders={cylinders}, heads={heads}, spt={sectors}", config)
         self.assertIn("ata0-master: type=disk", config)
@@ -97,6 +99,56 @@ class ManagerTests(unittest.TestCase):
             config,
         )
         self.assertNotIn("qemu", config.lower())
+
+    def test_cpu_model_round_trips_and_is_rendered_in_documented_syntax(self):
+        cfg = self.manager.create("pentium-pc", cpu_model="pentium")
+        loaded = self.manager.load(cfg.name)
+        self.assertEqual(loaded.cpu_model, "pentium")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/VGABIOS-lgpl-latest")]):
+            config = self.manager.render_bochsrc(loaded)
+        self.assertIn(
+            "cpu: model=pentium, count=1, ips=10000000, reset_on_triple_fault=1",
+            config,
+        )
+        validate_bochsrc_text(config)
+
+    def test_cpu_model_can_be_changed_without_touching_guest_disk(self):
+        cfg = self.manager.create("cpu-edit")
+        disk = Path(cfg.disk_path)
+        before = disk.stat().st_size
+        updated = self.manager.update_profile(
+            cfg.name, cfg.memory_mib, cfg.cpu_ips, cfg.iso_path, "p3_katmai"
+        )
+        self.assertEqual(updated.cpu_model, "p3_katmai")
+        self.assertEqual(disk.stat().st_size, before)
+
+    def test_unknown_cpu_model_is_rejected_in_profiles_and_custom_configs(self):
+        with self.assertRaisesRegex(VMError, "CPU model"):
+            self.manager.create("bad-cpu", cpu_model="not_a_real_bochs_cpu")
+        cfg = self.manager.create("bad-custom-cpu")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/VGABIOS-lgpl-latest")]):
+            config = self.manager.render_bochsrc(cfg)
+        config = config.replace("cpu: count=1", "cpu: model=not_a_real_bochs_cpu, count=1")
+        with self.assertRaisesRegex(VMError, "not in the supported model list"):
+            validate_bochsrc_text(config)
+
+    def test_legacy_profile_without_cpu_model_uses_build_default(self):
+        cfg = self.manager.create("legacy-cpu-profile")
+        profile_path = self.manager.config_path(cfg.name)
+        raw = json.loads(profile_path.read_text(encoding="utf-8"))
+        raw.pop("cpu_model")
+        profile_path.write_text(json.dumps(raw), encoding="utf-8")
+        loaded = self.manager.load(cfg.name)
+        self.assertEqual(loaded.cpu_model, "default")
+
+    def test_cpu_model_catalog_contains_only_named_choices(self):
+        self.assertEqual(CPU_MODEL_LABELS["default"], "Bochs default (build-dependent)")
+        self.assertIn("pentium", CPU_MODEL_LABELS)
+        self.assertIn("atom_n270", CPU_MODEL_LABELS)
 
     def test_finds_debian_trixie_vga_rom_from_vgabios_package_manifest(self):
         # Debian 13's vgabios package file list names this exact path.
@@ -491,8 +543,9 @@ class ManagerTests(unittest.TestCase):
         iso = self.root / "install.iso"
         iso.write_bytes(b"test image")
         cfg = self.manager.create("editable", iso=iso)
-        updated = self.manager.update_profile(cfg.name, 768, 12_000_000, None)
+        updated = self.manager.update_profile(cfg.name, 768, 12_000_000, None, "p2_klamath")
         self.assertEqual(updated.memory_mib, 768)
+        self.assertEqual(updated.cpu_model, "p2_klamath")
         self.assertEqual(updated.cpu_ips, 12_000_000)
         self.assertIsNone(updated.iso_path)
         self.assertTrue(Path(updated.disk_path).is_file())

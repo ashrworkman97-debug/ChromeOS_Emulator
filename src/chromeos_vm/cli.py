@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 from . import __version__
-from .manager import VMError, VMManager
+from .manager import CPU_MODEL_LABELS, VMError, VMManager
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--memory-mib", type=int, default=512)
     create.add_argument("--disk-gib", type=int, default=8)
     create.add_argument("--cpu-ips", type=int, default=10_000_000)
+    create.add_argument("--cpu-model", choices=tuple(CPU_MODEL_LABELS), default="default",
+                        help="pre-defined Bochs x86 CPU model")
     create.add_argument("--iso", type=Path)
     for command in ("start", "stop", "info"):
         sub = cmds.add_parser(command)
@@ -57,15 +59,28 @@ def main(argv: list[str] | None = None) -> int:
             print("Result: ready" if ready else "Result: install missing desktop packages.")
             return 0 if ready else 1
         if args.command == "create":
-            cfg = manager.create(args.name, args.memory_mib, args.disk_gib, args.cpu_ips, args.iso)
-            print(f"Created {cfg.name} with a {cfg.disk_gib} GiB sparse disk.")
+            cfg = manager.create(
+                args.name, args.memory_mib, args.disk_gib, args.cpu_ips, args.iso,
+                cpu_model=args.cpu_model,
+            )
+            print(
+                f"Created {cfg.name} with a {cfg.disk_gib} GiB sparse disk "
+                f"and CPU model {cfg.cpu_model}."
+            )
         elif args.command == "list":
             for cfg in manager.list_vms():
                 status = "running" if manager.is_running(cfg.name) else "stopped"
                 print(f"{cfg.name}: {status}, {cfg.memory_mib} MiB RAM, {cfg.disk_gib} GiB disk")
         elif args.command == "info":
             cfg = manager.load(args.name)
-            print(f"Name: {cfg.name}\nBackend: {cfg.backend}\nState: {'running' if manager.is_running(cfg.name) else 'stopped'}\nRAM: {cfg.memory_mib} MiB\nDisk: {cfg.disk_path}\nISO: {cfg.iso_path or 'not attached'}\nConfig: {manager.vm_path(cfg.name) / 'bochsrc'}")
+            print(
+                f"Name: {cfg.name}\nBackend: {cfg.backend}\n"
+                f"State: {'running' if manager.is_running(cfg.name) else 'stopped'}\n"
+                f"RAM: {cfg.memory_mib} MiB\nCPU model: {cfg.cpu_model}\n"
+                f"CPU IPS: {cfg.cpu_ips:,}\nDisk: {cfg.disk_path}\n"
+                f"ISO: {cfg.iso_path or 'not attached'}\n"
+                f"Config: {manager.vm_path(cfg.name) / 'bochsrc'}"
+            )
         elif args.command == "start":
             print(f"Started {args.name}; Bochs PID {manager.start(args.name)}")
         elif args.command == "stop":

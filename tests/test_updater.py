@@ -118,7 +118,7 @@ class UpdateFlowTests(unittest.TestCase):
             disk = vm_dir / "disk.raw"
             profile = vm_dir / "vm.json"
             disk.write_bytes(b"guest disk data must survive")
-            profile.write_text('{"name":"dos-test"}\n', encoding="utf-8")
+            profile.write_text('{"name":"dos-test","cpu_model":"pentium"}\n', encoding="utf-8")
             disk_before = disk.read_bytes()
             profile_before = profile.read_bytes()
 

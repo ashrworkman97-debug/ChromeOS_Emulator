@@ -9,6 +9,7 @@
 | KVM | Not required for Bochs |
 | Updates | Background commit-based updater from this repository's `main` branch |
 | Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
+| CPU model selector | Bochs default, Intel 386SX/486DX4, Pentium/Pentium MMX, AMD K6-2, Pentium II/III/4, Core Duo T2400, Atom N270 |
 | Guest display | Bochs's own GUI window |
 | Floppy A/B | Optional raw floppy images at standard Bochs capacities; both write-protected by default; BIOS floppy boot targets A |
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
@@ -26,11 +27,15 @@ Bochs models a broad set of x86 CPUs and standard PC devices, including VGA, IDE
 
 Software instruction emulation is expensive. Start with modest guest RAM and older/lightweight guest systems. Performance will be limited on low-power Chromebook CPUs. Windows 10/11 is not a target performance promise.
 
+## CPU models
+
+The native profile editor exposes Bochs' documented pre-defined models: i386, i486dx4, pentium, pentium_mmx, amd_k6_2_chomper, p2_klamath, p3_katmai, p4_willamette, core_duo_t2400_yonah, and atom_n270. The "Bochs default" choice omits `model=` and retains the package's build default. Bochs documents these names in its [pre-defined CPU model table](https://bochs.sourceforge.io/doc/docbook/user/cpu-models.html). Availability depends on the CPU level/features compiled into the installed Bochs package; the app performs static allowlist validation, and Bochs performs final validation at launch. Model selection changes the CPU presented to the guest; it does not enable hardware acceleration. Debian 13 CI runs the real Bochs binary against every exposed model and checks that BIOS/VGA/IDE initialization completes. This is configuration initialization testing, not a guest OS boot test.
+
 ## Floppy media
 
 The manager supports optional floppy A and B images using Bochs' documented `floppya` and `floppyb` directives. Both accept exact image sizes corresponding to 160K, 180K, 320K, 360K, 720K, 1.2M, 1.44M, and 2.88M media. Generated configurations mark both images write-protected, and VM-aware static validation rejects custom overrides that disable this protection. BIOS floppy boot targets drive A; drive B is secondary media and does not replace A in the boot sequence. The original images are referenced in place and are not copied or modified by the manager. See the [Bochs configuration manual](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html) for the upstream syntax.
 
-CI checks that generated configurations with both floppy drives are parsed and initialized by the Debian 13 Bochs package. This is not proof that a particular floppy image contains a bootable operating system.
+CI checks that generated configurations with both floppy drives and each exposed CPU model are parsed and initialized by the Debian 13 Bochs package. This is not proof that a particular floppy image contains a bootable operating system.
 
 ## Configuration validation
 

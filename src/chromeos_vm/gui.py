@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 
-from .manager import VMError, VMManager
+from .manager import CPU_MODEL_LABELS, VMError, VMManager
 from .updater import UpdateResult, check_for_updates
 
 
@@ -278,25 +278,39 @@ class ChromeOSVMStudio:
         ram = tk.StringVar(value="512")
         disk = tk.StringVar(value="8")
         iso = tk.StringVar()
+        cpu_model = tk.StringVar(value=CPU_MODEL_LABELS["default"])
         ttk.Label(frame, text="Name").grid(row=0, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=name, width=34).grid(row=0, column=1, sticky="ew", pady=5)
         ttk.Label(frame, text="RAM (MiB)").grid(row=1, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=ram, width=34).grid(row=1, column=1, sticky="ew", pady=5)
         ttk.Label(frame, text="Disk (GiB)").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=disk, width=34).grid(row=2, column=1, sticky="ew", pady=5)
-        ttk.Label(frame, text="Install ISO").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="CPU model").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Combobox(frame, textvariable=cpu_model, state="readonly",
+                     values=tuple(CPU_MODEL_LABELS.values()), width=40).grid(
+                         row=3, column=1, sticky="ew", pady=5)
+        ttk.Label(frame, text="Install ISO").grid(row=4, column=0, sticky="w", pady=5)
         iso_row = ttk.Frame(frame)
-        iso_row.grid(row=3, column=1, sticky="ew", pady=5)
+        iso_row.grid(row=4, column=1, sticky="ew", pady=5)
         ttk.Entry(iso_row, textvariable=iso, width=25).pack(side="left", fill="x", expand=True)
         ttk.Button(iso_row, text="Browse…", command=lambda: iso.set(filedialog.askopenfilename(
             parent=dialog, filetypes=[("Disk images", "*.iso *.img *.ima"), ("All files", "*")]))).pack(side="left", padx=(5, 0))
-        ttk.Label(frame, text="Defaults are conservative for Chromebook CPUs.", foreground="#666").grid(
-            row=4, column=0, columnspan=2, sticky="w", pady=(5, 10))
+        ttk.Label(
+            frame,
+            text=("CPU model controls guest-visible features, not emulation speed. "
+                  "Model availability depends on the installed Bochs build."),
+            foreground="#666", wraplength=440,
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(5, 10))
 
         def create() -> None:
             try:
-                cfg = self.manager.create(name.get().strip(), int(ram.get()), int(disk.get()),
-                                          iso=iso.get().strip() or None)
+                selected_model = next(
+                    key for key, label in CPU_MODEL_LABELS.items() if label == cpu_model.get()
+                )
+                cfg = self.manager.create(
+                    name.get().strip(), int(ram.get()), int(disk.get()),
+                    iso=iso.get().strip() or None, cpu_model=selected_model,
+                )
                 dialog.destroy()
                 self.refresh()
                 self.table.selection_set(cfg.name)
@@ -305,7 +319,7 @@ class ChromeOSVMStudio:
                 messagebox.showerror("Could not create VM", str(exc), parent=dialog)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=5, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=6, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Create", command=create).pack(side="right")
         frame.columnconfigure(1, weight=1)
@@ -356,27 +370,41 @@ class ChromeOSVMStudio:
         frame.pack(fill="both", expand=True)
         ram = tk.StringVar(value=str(cfg.memory_mib))
         cpu = tk.StringVar(value=str(cfg.cpu_ips))
+        cpu_model = tk.StringVar(value=CPU_MODEL_LABELS[cfg.cpu_model])
         iso = tk.StringVar(value=cfg.iso_path or "")
 
         ttk.Label(frame, text="Memory (MiB)").grid(row=0, column=0, sticky="w", pady=6)
         ttk.Entry(frame, textvariable=ram, width=42).grid(row=0, column=1, sticky="ew", pady=6)
         ttk.Label(frame, text="CPU speed (Bochs IPS)").grid(row=1, column=0, sticky="w", pady=6)
         ttk.Entry(frame, textvariable=cpu, width=42).grid(row=1, column=1, sticky="ew", pady=6)
-        ttk.Label(frame, text="CD/DVD image").grid(row=2, column=0, sticky="w", pady=6)
+        ttk.Label(frame, text="CPU model").grid(row=2, column=0, sticky="w", pady=6)
+        ttk.Combobox(frame, textvariable=cpu_model, state="readonly",
+                     values=tuple(CPU_MODEL_LABELS.values()), width=40).grid(
+                         row=2, column=1, sticky="ew", pady=6)
+        ttk.Label(frame, text="CD/DVD image").grid(row=3, column=0, sticky="w", pady=6)
         media_row = ttk.Frame(frame)
-        media_row.grid(row=2, column=1, sticky="ew", pady=6)
+        media_row.grid(row=3, column=1, sticky="ew", pady=6)
         ttk.Entry(media_row, textvariable=iso, width=34).pack(side="left", fill="x", expand=True)
         ttk.Button(media_row, text="Browse…", command=lambda: iso.set(
             filedialog.askopenfilename(parent=dialog,
                 filetypes=[("Disk images", "*.iso *.img *.ima"), ("All files", "*")])
             or iso.get())).pack(side="left", padx=(5, 0))
         ttk.Button(media_row, text="Eject ISO", command=lambda: iso.set("")).pack(side="left", padx=(5, 0))
-        ttk.Label(frame, text=f"Virtual disk: {cfg.disk_gib} GiB (disk resizing is not supported yet).",
-                  foreground="#666").grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 12))
+        ttk.Label(
+            frame,
+            text=(f"Virtual disk: {cfg.disk_gib} GiB (disk resizing is not supported yet). "
+                  "CPU model support depends on the installed Bochs build."),
+            foreground="#666", wraplength=500,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 12))
 
         def save() -> None:
             try:
-                self.manager.update_profile(name, int(ram.get()), int(cpu.get()), iso.get().strip() or None)
+                selected_model = next(
+                    key for key, label in CPU_MODEL_LABELS.items() if label == cpu_model.get()
+                )
+                self.manager.update_profile(
+                    name, int(ram.get()), int(cpu.get()), iso.get().strip() or None, selected_model
+                )
                 dialog.destroy()
                 self.refresh()
                 self._status(f"Saved {name}. Changes apply the next time the VM boots.")
@@ -384,7 +412,7 @@ class ChromeOSVMStudio:
                 messagebox.showerror("Could not save VM", str(exc), parent=dialog)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=4, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=5, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Save changes", command=save).pack(side="right")
         frame.columnconfigure(1, weight=1)

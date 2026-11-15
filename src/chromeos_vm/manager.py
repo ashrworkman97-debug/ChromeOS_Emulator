@@ -23,6 +23,22 @@ CONFIG_VERSION = 2
 MIN_MEMORY_MIB, MAX_MEMORY_MIB = 16, 4096
 MIN_DISK_GIB, MAX_DISK_GIB = 1, 512
 MIN_IPS, MAX_IPS = 100_000, 500_000_000
+# Names come from Bochs' documented pre-defined CPU model table. The actual
+# set available depends on the CPU level/features compiled into the Bochs build.
+CPU_MODEL_LABELS = {
+    "default": "Bochs default (build-dependent)",
+    "i386": "Intel 386SX",
+    "i486dx4": "Intel 486DX4",
+    "pentium": "Intel Pentium (P54C)",
+    "pentium_mmx": "Intel Pentium MMX",
+    "amd_k6_2_chomper": "AMD K6-2",
+    "p2_klamath": "Intel Pentium II (Klamath)",
+    "p3_katmai": "Intel Pentium III (Katmai)",
+    "p4_willamette": "Intel Pentium 4 (Willamette)",
+    "core_duo_t2400_yonah": "Intel Core Duo T2400 (Yonah)",
+    "atom_n270": "Intel Atom N270",
+}
+CPU_MODEL_IDS = frozenset(CPU_MODEL_LABELS) - {"default"}
 BOCHSRC_MAX_BYTES = 256 * 1024
 BOCHSRC_REQUIRED = {
     "megs", "cpu", "romimage", "vgaromimage", "display_library",
@@ -49,6 +65,13 @@ def validate_resources(memory_mib: int, disk_gib: int, cpu_ips: int) -> None:
         raise VMError(f"Disk size must be {MIN_DISK_GIB}–{MAX_DISK_GIB} GiB.")
     if not MIN_IPS <= cpu_ips <= MAX_IPS:
         raise VMError(f"CPU speed must be {MIN_IPS:,}–{MAX_IPS:,} instructions per second.")
+
+
+def validate_cpu_model(cpu_model: str) -> None:
+    if not isinstance(cpu_model, str) or cpu_model not in CPU_MODEL_LABELS:
+        raise VMError(
+            "Choose a CPU model listed by ChromeOS VM Studio; arbitrary model strings are not accepted."
+        )
 
 
 def bochs_quote(value: str | Path) -> str:
@@ -118,6 +141,11 @@ def validate_bochsrc_text(text: str) -> None:
     ips = int(ips_match.group(1))
     if not MIN_IPS <= ips <= MAX_IPS:
         raise VMError(f"CPU IPS must be between {MIN_IPS:,} and {MAX_IPS:,}.")
+    model_match = re.search(r"\bmodel\s*=\s*([A-Za-z0-9_]+)", values["cpu"])
+    if model_match and model_match.group(1) not in CPU_MODEL_IDS:
+        raise VMError(
+            f"The Bochs CPU model '{model_match.group(1)}' is not in the supported model list."
+        )
 
     for directive in ("romimage", "vgaromimage"):
         if not re.search(r"\bfile\s*=", values[directive]):
@@ -167,6 +195,7 @@ class VMConfig:
     floppy_a_path: str | None = None
     floppy_b_path: str | None = None
     cpu_ips: int = 10_000_000
+    cpu_model: str = "default"
     backend: str = "bochs"
     disk_format: str = "raw"
     config_version: int = CONFIG_VERSION
@@ -181,6 +210,7 @@ class VMConfig:
             raise VMError(f"Unsupported VM config version {config.config_version}.")
         validate_name(config.name)
         validate_resources(config.memory_mib, config.disk_gib, config.cpu_ips)
+        validate_cpu_model(config.cpu_model)
         if config.backend != "bochs" or config.disk_format != "raw":
             raise VMError("This version supports the Bochs backend and raw disks only.")
         if not isinstance(config.disk_path, str) or not config.disk_path:
@@ -233,9 +263,11 @@ class VMManager:
         temp.replace(path)
 
     def create(self, name: str, memory_mib: int = 512, disk_gib: int = 8,
-               cpu_ips: int = 10_000_000, iso: Path | str | None = None) -> VMConfig:
+               cpu_ips: int = 10_000_000, iso: Path | str | None = None,
+               cpu_model: str = "default") -> VMConfig:
         validate_name(name)
         validate_resources(memory_mib, disk_gib, cpu_ips)
+        validate_cpu_model(cpu_model)
         iso_value = self._validate_iso(iso) if iso else None
         directory = self.vm_path(name)
         if directory.exists():
@@ -247,7 +279,8 @@ class VMManager:
             with disk.open("xb") as stream:
                 stream.truncate(image_bytes)
             config = VMConfig(name=name, memory_mib=memory_mib, disk_gib=disk_gib,
-                              disk_path=str(disk.resolve()), iso_path=iso_value, cpu_ips=cpu_ips)
+                              disk_path=str(disk.resolve()), iso_path=iso_value,
+                              cpu_ips=cpu_ips, cpu_model=cpu_model)
             self._save(config)
             (directory / "logs").mkdir()
             (directory / "runtime").mkdir()
@@ -466,7 +499,7 @@ class VMManager:
         return existed
 
     def update_profile(self, name: str, memory_mib: int, cpu_ips: int,
-                       iso: Path | str | None) -> VMConfig:
+                       iso: Path | str | None, cpu_model: str | None = None) -> VMConfig:
         """Update editable profile fields for a stopped VM; never resize its disk."""
         cfg = self.load(name)
         if self.is_running(name):
@@ -474,11 +507,14 @@ class VMManager:
         if self.custom_bochsrc_path(name).exists():
             raise VMError("Restore the generated Bochs config before editing profile settings; the custom config is currently authoritative.")
         validate_resources(memory_mib, cfg.disk_gib, cpu_ips)
+        selected_cpu_model = cfg.cpu_model if cpu_model is None else cpu_model
+        validate_cpu_model(selected_cpu_model)
         iso_value = self._validate_iso(iso) if iso else None
         updated = VMConfig(**{
             **asdict(cfg),
             "memory_mib": memory_mib,
             "cpu_ips": cpu_ips,
+            "cpu_model": selected_cpu_model,
             "iso_path": iso_value,
         })
         self._save(updated)
@@ -543,10 +579,12 @@ class VMManager:
         return None
 
     def render_bochsrc(self, cfg: VMConfig) -> str:
+        validate_cpu_model(cfg.cpu_model)
+        cpu_model = f"model={cfg.cpu_model}, " if cfg.cpu_model != "default" else ""
         lines = [
             "# Generated by ChromeOS VM Studio. Edit the VM profile in the app.",
             f"megs: {cfg.memory_mib}",
-            f"cpu: count=1, ips={cfg.cpu_ips}, reset_on_triple_fault=1",
+            f"cpu: {cpu_model}count=1, ips={cfg.cpu_ips}, reset_on_triple_fault=1",
         ]
         bios = self._find_bios("BIOS-bochs-latest")
         vgabios = self._find_bios("VGABIOS-lgpl-latest")
