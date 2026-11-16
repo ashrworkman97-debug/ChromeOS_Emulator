@@ -182,7 +182,7 @@ jobs:
                   vm = manager.create(
                       "pci-" + chipset, memory_mib=128, disk_gib=1, chipset=chipset
                   )
-                  config = manager.render_bochsrc(vm) + "\\nspeaker: enabled=0\\n"
+                  config = manager.render_bochsrc(vm) + "\nspeaker: enabled=0\n"
                   assert f"pci: enabled=1, chipset={chipset}" in config
                   config_path = manager.vm_path(vm.name) / "bochsrc.pci-ci"
                   config_path.write_text(config, encoding="utf-8")
@@ -197,7 +197,7 @@ jobs:
                   missing = [marker for marker in required_markers if marker not in log_text]
                   if missing or ">>PANIC<<" in log_text:
                       raise SystemExit(
-                          f"Bochs rejected PCI chipset {chipset}; missing markers: {missing}\\n"
+                          f"Bochs rejected PCI chipset {chipset}; missing markers: {missing}\n"
                           + result.stdout[-2500:] + result.stderr[-2500:] + log_text[-6000:]
                       )
                   print(f"Bochs PCI chipset initialized: {chipset} (exit {result.returncode})")
