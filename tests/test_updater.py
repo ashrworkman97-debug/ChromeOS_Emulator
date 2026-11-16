@@ -110,7 +110,7 @@ class UpdateFlowTests(unittest.TestCase):
             ("project/pyproject.toml", "[project]\nname='chromeos-vm-studio'\n"),
             ("project/src/", None),
             ("project/src/chromeos_vm/", None),
-            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.5'\n"),
+            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.7'\n"),
         ])
         with tempfile.TemporaryDirectory() as temp:
             vm_dir = Path(temp) / "vms" / "dos-test"
@@ -118,7 +118,7 @@ class UpdateFlowTests(unittest.TestCase):
             disk = vm_dir / "disk.raw"
             profile = vm_dir / "vm.json"
             disk.write_bytes(b"guest disk data must survive")
-            profile.write_text('{"name":"dos-test","cpu_model":"pentium"}\n', encoding="utf-8")
+            profile.write_text('{"name":"dos-test","cpu_model":"pentium","chipset":"i440bx"}\n', encoding="utf-8")
             disk_before = disk.read_bytes()
             profile_before = profile.read_bytes()
 
