@@ -302,8 +302,8 @@ class ChromeOSVMStudio:
             parent=dialog, filetypes=[("Disk images", "*.iso *.img *.ima"), ("All files", "*")]))).pack(side="left", padx=(5, 0))
         ttk.Label(
             frame,
-            text=("CPU model controls guest-visible features, not emulation speed. "
-                  "Model availability depends on the installed Bochs build."),
+            text=("CPU model and PCI chipset control guest-visible hardware, not emulation speed. "
+                  "Model and chipset availability depend on the installed Bochs build."),
             foreground="#666", wraplength=440,
         ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(5, 10))
 
@@ -360,7 +360,7 @@ class ChromeOSVMStudio:
             messagebox.showerror("Could not stop VM", str(exc), parent=self.root)
 
     def edit_vm(self) -> None:
-        """Edit a stopped VM's memory, CPU speed, and removable CD/DVD media."""
+        """Edit a stopped VM's memory, CPU model, PCI chipset, and CD/DVD media."""
         name = self.selected_name()
         if not name:
             self._status("Select a virtual machine first.")
@@ -407,7 +407,7 @@ class ChromeOSVMStudio:
         ttk.Label(
             frame,
             text=(f"Virtual disk: {cfg.disk_gib} GiB (disk resizing is not supported yet). "
-                  "CPU model support depends on the installed Bochs build."),
+                  "CPU model and PCI chipset support depend on the installed Bochs build."),
             foreground="#666", wraplength=500,
         ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 12))
 
