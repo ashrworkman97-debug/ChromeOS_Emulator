@@ -84,7 +84,7 @@ CLI equivalents are also available:
 
 ```sh
 chromeos-vm check
-chromeos-vm create win98 --memory-mib 512 --disk-gib 8 --iso /path/to/install.iso
+chromeos-vm create win98 --memory-mib 512 --disk-gib 8 --cpu-model pentium --chipset i440fx --iso /path/to/install.iso
 chromeos-vm start win98
 chromeos-vm info win98
 chromeos-vm stop win98
