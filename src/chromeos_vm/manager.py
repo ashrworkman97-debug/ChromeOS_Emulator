@@ -39,6 +39,11 @@ CPU_MODEL_LABELS = {
     "atom_n270": "Intel Atom N270",
 }
 CPU_MODEL_IDS = frozenset(CPU_MODEL_LABELS) - {"default"}
+CHIPSET_LABELS = {
+    "i430fx": "Intel 430FX (legacy PCI)",
+    "i440fx": "Intel 440FX (default PCI)",
+    "i440bx": "Intel 440BX (Pentium II-era PCI)",
+}
 BOCHSRC_MAX_BYTES = 256 * 1024
 BOCHSRC_REQUIRED = {
     "megs", "cpu", "romimage", "vgaromimage", "display_library",
@@ -71,6 +76,13 @@ def validate_cpu_model(cpu_model: str) -> None:
     if not isinstance(cpu_model, str) or cpu_model not in CPU_MODEL_LABELS:
         raise VMError(
             "Choose a CPU model listed by ChromeOS VM Studio; arbitrary model strings are not accepted."
+        )
+
+
+def validate_chipset(chipset: str) -> None:
+    if not isinstance(chipset, str) or chipset not in CHIPSET_LABELS:
+        raise VMError(
+            "Choose a PCI chipset supported by ChromeOS VM Studio; arbitrary chipset strings are not accepted."
         )
 
 
@@ -118,7 +130,7 @@ def validate_bochsrc_text(text: str) -> None:
             raise VMError(f"Line {number}: '{directive}' has no value.")
         if value.count('"') % 2:
             raise VMError(f"Line {number}: unmatched double quote.")
-        if directive in BOCHSRC_REQUIRED or directive in {"floppya", "floppyb"}:
+        if directive in BOCHSRC_REQUIRED or directive in {"floppya", "floppyb", "pci"}:
             if directive in seen:
                 raise VMError(f"Line {number}: duplicate directive '{directive}'.")
             seen.add(directive)
@@ -146,6 +158,17 @@ def validate_bochsrc_text(text: str) -> None:
         raise VMError(
             f"The Bochs CPU model '{model_match.group(1)}' is not in the supported model list."
         )
+
+    pci_value = values.get("pci")
+    if pci_value:
+        enabled_match = re.search(r"\benabled\s*=\s*([01])\b", pci_value)
+        chipset_match = re.search(r"\bchipset\s*=\s*([A-Za-z0-9]+)\b", pci_value)
+        if not enabled_match or not chipset_match:
+            raise VMError("The 'pci' directive must include enabled=0|1 and chipset=.")
+        if chipset_match.group(1).lower() not in CHIPSET_LABELS:
+            raise VMError(
+                f"The Bochs PCI chipset '{chipset_match.group(1)}' is not supported by this manager."
+            )
 
     for directive in ("romimage", "vgaromimage"):
         if not re.search(r"\bfile\s*=", values[directive]):
@@ -196,6 +219,7 @@ class VMConfig:
     floppy_b_path: str | None = None
     cpu_ips: int = 10_000_000
     cpu_model: str = "default"
+    chipset: str = "i440fx"
     backend: str = "bochs"
     disk_format: str = "raw"
     config_version: int = CONFIG_VERSION
@@ -211,6 +235,7 @@ class VMConfig:
         validate_name(config.name)
         validate_resources(config.memory_mib, config.disk_gib, config.cpu_ips)
         validate_cpu_model(config.cpu_model)
+        validate_chipset(config.chipset)
         if config.backend != "bochs" or config.disk_format != "raw":
             raise VMError("This version supports the Bochs backend and raw disks only.")
         if not isinstance(config.disk_path, str) or not config.disk_path:
@@ -264,10 +289,11 @@ class VMManager:
 
     def create(self, name: str, memory_mib: int = 512, disk_gib: int = 8,
                cpu_ips: int = 10_000_000, iso: Path | str | None = None,
-               cpu_model: str = "default") -> VMConfig:
+               cpu_model: str = "default", chipset: str = "i440fx") -> VMConfig:
         validate_name(name)
         validate_resources(memory_mib, disk_gib, cpu_ips)
         validate_cpu_model(cpu_model)
+        validate_chipset(chipset)
         iso_value = self._validate_iso(iso) if iso else None
         directory = self.vm_path(name)
         if directory.exists():
@@ -280,7 +306,7 @@ class VMManager:
                 stream.truncate(image_bytes)
             config = VMConfig(name=name, memory_mib=memory_mib, disk_gib=disk_gib,
                               disk_path=str(disk.resolve()), iso_path=iso_value,
-                              cpu_ips=cpu_ips, cpu_model=cpu_model)
+                              cpu_ips=cpu_ips, cpu_model=cpu_model, chipset=chipset)
             self._save(config)
             (directory / "logs").mkdir()
             (directory / "runtime").mkdir()
@@ -499,7 +525,8 @@ class VMManager:
         return existed
 
     def update_profile(self, name: str, memory_mib: int, cpu_ips: int,
-                       iso: Path | str | None, cpu_model: str | None = None) -> VMConfig:
+                       iso: Path | str | None, cpu_model: str | None = None,
+                       chipset: str | None = None) -> VMConfig:
         """Update editable profile fields for a stopped VM; never resize its disk."""
         cfg = self.load(name)
         if self.is_running(name):
@@ -508,13 +535,16 @@ class VMManager:
             raise VMError("Restore the generated Bochs config before editing profile settings; the custom config is currently authoritative.")
         validate_resources(memory_mib, cfg.disk_gib, cpu_ips)
         selected_cpu_model = cfg.cpu_model if cpu_model is None else cpu_model
+        selected_chipset = cfg.chipset if chipset is None else chipset
         validate_cpu_model(selected_cpu_model)
+        validate_chipset(selected_chipset)
         iso_value = self._validate_iso(iso) if iso else None
         updated = VMConfig(**{
             **asdict(cfg),
             "memory_mib": memory_mib,
             "cpu_ips": cpu_ips,
             "cpu_model": selected_cpu_model,
+            "chipset": selected_chipset,
             "iso_path": iso_value,
         })
         self._save(updated)
@@ -585,6 +615,7 @@ class VMManager:
             "# Generated by ChromeOS VM Studio. Edit the VM profile in the app.",
             f"megs: {cfg.memory_mib}",
             f"cpu: {cpu_model}count=1, ips={cfg.cpu_ips}, reset_on_triple_fault=1",
+            f"pci: enabled=1, chipset={cfg.chipset}",
         ]
         bios = self._find_bios("BIOS-bochs-latest")
         vgabios = self._find_bios("VGABIOS-lgpl-latest")
