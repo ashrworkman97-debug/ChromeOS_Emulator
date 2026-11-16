@@ -168,6 +168,41 @@ jobs:
                   print(f"Bochs CPU model initialized: {model}")
           PY
 
+      - name: Parse and initialize each supported PCI chipset with real Bochs
+        run: |
+          PYTHONPATH=src python3 - <<'PY'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from chromeos_vm.manager import CHIPSET_LABELS, VMManager
+
+          with tempfile.TemporaryDirectory() as temp:
+              manager = VMManager(Path(temp) / "vms")
+              for chipset in CHIPSET_LABELS:
+                  vm = manager.create(
+                      "pci-" + chipset, memory_mib=128, disk_gib=1, chipset=chipset
+                  )
+                  config = manager.render_bochsrc(vm) + "\\nspeaker: enabled=0\\n"
+                  assert f"pci: enabled=1, chipset={chipset}" in config
+                  config_path = manager.vm_path(vm.name) / "bochsrc.pci-ci"
+                  config_path.write_text(config, encoding="utf-8")
+                  log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+                  result = subprocess.run(
+                      ["xvfb-run", "-a", "env", "SDL_VIDEODRIVER=x11",
+                       "bochs", "-benchmark", "1", "-q", "-f", str(config_path)],
+                      capture_output=True, text=True, timeout=45, check=False,
+                  )
+                  log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+                  required_markers = ("VGABios", "ata0-0:", "cpu loop quit")
+                  missing = [marker for marker in required_markers if marker not in log_text]
+                  if missing or ">>PANIC<<" in log_text:
+                      raise SystemExit(
+                          f"Bochs rejected PCI chipset {chipset}; missing markers: {missing}\\n"
+                          + result.stdout[-2500:] + result.stderr[-2500:] + log_text[-6000:]
+                      )
+                  print(f"Bochs PCI chipset initialized: {chipset} (exit {result.returncode})")
+          PY
+
   native-gui-smoke:
     runs-on: ubuntu-latest
     steps:
