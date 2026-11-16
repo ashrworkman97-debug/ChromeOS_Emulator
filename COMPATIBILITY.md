@@ -10,6 +10,7 @@
 | Updates | Background commit-based updater from this repository's `main` branch |
 | Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
 | CPU model selector | Bochs default, Intel 386SX/486DX4, Pentium/Pentium MMX, AMD K6-2, Pentium II/III/4, Core Duo T2400, Atom N270 |
+| PCI chipset selector | Bochs PCI i430FX, i440FX (default), and i440BX; availability depends on installed Bochs build |
 | Guest display | Bochs's own GUI window |
 | Floppy A/B | Optional raw floppy images at standard Bochs capacities; both write-protected by default; BIOS floppy boot targets A |
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
@@ -26,6 +27,10 @@ Nested virtualization has varied by ChromeOS device/kernel and should not be ass
 Bochs models a broad set of x86 CPUs and standard PC devices, including VGA, IDE hard disks, ATAPI CD-ROM, keyboard, mouse, sound and selected network adapters depending on build options. Bochs supports x86-64 extensions, but that does not guarantee every modern OS installer or peripheral works with every Bochs configuration.
 
 Software instruction emulation is expensive. Start with modest guest RAM and older/lightweight guest systems. Performance will be limited on low-power Chromebook CPUs. Windows 10/11 is not a target performance promise.
+
+## PCI chipsets
+
+The profile editor supports Bochs' documented i430FX, i440FX, and i440BX PCI chipsets. The generated configuration uses `pci: enabled=1, chipset=...`. Bochs documents i440FX as the default and describes i440BX as limited; a particular distro build must include PCI support. Debian 13 CI runs the real Bochs executable with all three chipset selections and checks BIOS/VGA/IDE initialization. This does not establish guest OS boot compatibility. See the [Bochs PCI directive documentation](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html#BOCHS-PARAMETERS-PARENT-PCI).
 
 ## CPU models
 
