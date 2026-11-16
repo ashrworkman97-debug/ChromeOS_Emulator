@@ -195,7 +195,7 @@ class ManagerTests(unittest.TestCase):
         loaded = self.manager.load(cfg.name)
         self.assertEqual(loaded.chipset, "i440fx")
 
-    def test_chipset_catalog_contains_only_documented_bo​​chs_choices(self):
+    def test_chipset_catalog_contains_only_documented_bochs_choices(self):
         self.assertEqual(set(CHIPSET_LABELS), {"i430fx", "i440fx", "i440bx"})
 
     def test_finds_debian_trixie_vga_rom_from_vgabios_package_manifest(self):
