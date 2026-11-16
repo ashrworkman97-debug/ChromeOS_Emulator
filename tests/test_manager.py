@@ -9,7 +9,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from chromeos_vm.manager import (
-    CPU_MODEL_LABELS, VMConfig, VMError, VMManager, bochs_quote, disk_geometry,
+    CHIPSET_LABELS, CPU_MODEL_LABELS, VMConfig, VMError, VMManager, bochs_quote, disk_geometry,
     validate_name, validate_resources, validate_bochsrc_text,
 )
 
@@ -93,6 +93,7 @@ class ManagerTests(unittest.TestCase):
         self.assertIn("display_library: sdl2", config)
         self.assertIn(f"cylinders={cylinders}, heads={heads}, spt={sectors}", config)
         self.assertIn("ata0-master: type=disk", config)
+        self.assertIn("pci: enabled=1, chipset=i440fx", config)
         self.assertIn("boot: disk", config)
         self.assertIn(
             f'log: "{(self.manager.vm_path(cfg.name) / "logs/bochs.log").resolve()}"',
@@ -149,6 +150,53 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(CPU_MODEL_LABELS["default"], "Bochs default (build-dependent)")
         self.assertIn("pentium", CPU_MODEL_LABELS)
         self.assertIn("atom_n270", CPU_MODEL_LABELS)
+
+    def test_chipset_round_trips_and_renders_documented_pci_syntax(self):
+        for chipset in ("i430fx", "i440fx", "i440bx"):
+            with self.subTest(chipset=chipset):
+                cfg = self.manager.create("pci-" + chipset, chipset=chipset)
+                loaded = self.manager.load(cfg.name)
+                self.assertEqual(loaded.chipset, chipset)
+                with patch.object(self.manager, "_find_bios",
+                                  side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                               Path("/mock/VGABIOS-lgpl-latest")]):
+                    config = self.manager.render_bochsrc(loaded)
+                self.assertIn(f"pci: enabled=1, chipset={chipset}", config)
+                validate_bochsrc_text(config)
+
+    def test_chipset_can_be_changed_without_touching_guest_disk(self):
+        cfg = self.manager.create("pci-edit")
+        disk = Path(cfg.disk_path)
+        before = disk.stat().st_size
+        updated = self.manager.update_profile(
+            cfg.name, cfg.memory_mib, cfg.cpu_ips, cfg.iso_path, cfg.cpu_model, "i440bx"
+        )
+        self.assertEqual(updated.chipset, "i440bx")
+        self.assertEqual(disk.stat().st_size, before)
+
+    def test_unknown_chipset_is_rejected_in_profiles_and_custom_configs(self):
+        with self.assertRaisesRegex(VMError, "PCI chipset"):
+            self.manager.create("bad-chipset", chipset="i999xx")
+        cfg = self.manager.create("bad-custom-chipset")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/VGABIOS-lgpl-latest")]):
+            config = self.manager.render_bochsrc(cfg)
+        invalid = config.replace("chipset=i440fx", "chipset=i999xx")
+        with self.assertRaisesRegex(VMError, "PCI chipset"):
+            validate_bochsrc_text(invalid)
+
+    def test_legacy_profile_without_chipset_uses_i440fx_default(self):
+        cfg = self.manager.create("legacy-chipset-profile")
+        profile_path = self.manager.config_path(cfg.name)
+        raw = json.loads(profile_path.read_text(encoding="utf-8"))
+        raw.pop("chipset")
+        profile_path.write_text(json.dumps(raw), encoding="utf-8")
+        loaded = self.manager.load(cfg.name)
+        self.assertEqual(loaded.chipset, "i440fx")
+
+    def test_chipset_catalog_contains_only_documented_bo​​chs_choices(self):
+        self.assertEqual(set(CHIPSET_LABELS), {"i430fx", "i440fx", "i440bx"})
 
     def test_finds_debian_trixie_vga_rom_from_vgabios_package_manifest(self):
         # Debian 13's vgabios package file list names this exact path.
