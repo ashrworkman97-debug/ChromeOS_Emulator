@@ -216,9 +216,15 @@ jobs:
           PYTHONPATH=src xvfb-run -a /usr/bin/python3 - <<'PY'
           import tempfile
           import tkinter as tk
+          from tkinter import ttk
           from pathlib import Path
           from chromeos_vm.gui import ChromeOSVMStudio
-          from chromeos_vm.manager import VMManager
+          from chromeos_vm.manager import CHIPSET_LABELS, VMManager
+
+          def descendants(widget):
+              for child in widget.winfo_children():
+                  yield child
+                  yield from descendants(child)
 
           with tempfile.TemporaryDirectory() as temp:
               root = tk.Tk()
@@ -227,11 +233,30 @@ jobs:
               root.update_idletasks()
               assert root.title() == "ChromeOS VM Studio"
               assert app.table.winfo_exists()
+
+              # Exercise the actual create dialog and confirm chipset choices
+              # are presented by native Tk widgets, not just manager APIs.
+              app.new_vm()
+              root.update()
+              create_dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+              create_combos = [w for w in descendants(create_dialog) if isinstance(w, ttk.Combobox)]
+              assert any(set(CHIPSET_LABELS.values()).issubset(set(w.cget("values"))) for w in create_combos)
+              create_dialog.destroy()
+
               manager.create("dos-test", memory_mib=128, disk_gib=1)
               app.refresh()
               assert app.table.exists("dos-test")
               assert app.table.set("dos-test", "state") == "Stopped"
               assert app.table.tag_has("stopped", "dos-test")
+              app.table.selection_set("dos-test")
+
+              # Exercise the edit dialog too, so profile changes remain reachable.
+              app.edit_vm()
+              root.update()
+              edit_dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+              edit_combos = [w for w in descendants(edit_dialog) if isinstance(w, ttk.Combobox)]
+              assert any(set(CHIPSET_LABELS.values()).issubset(set(w.cget("values"))) for w in edit_combos)
+              edit_dialog.destroy()
               root.destroy()
-          print("Native Tk GUI smoke test passed.")
+          print("Native Tk GUI and PCI chipset dialog smoke test passed.")
           PY
