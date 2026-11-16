@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 from . import __version__
-from .manager import CPU_MODEL_LABELS, VMError, VMManager
+from .manager import CHIPSET_LABELS, CPU_MODEL_LABELS, VMError, VMManager
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--cpu-ips", type=int, default=10_000_000)
     create.add_argument("--cpu-model", choices=tuple(CPU_MODEL_LABELS), default="default",
                         help="pre-defined Bochs x86 CPU model")
+    create.add_argument("--chipset", choices=tuple(CHIPSET_LABELS), default="i440fx",
+                        help="Bochs PCI chipset (i430fx, i440fx, or i440bx)")
     create.add_argument("--iso", type=Path)
     for command in ("start", "stop", "info"):
         sub = cmds.add_parser(command)
@@ -61,11 +63,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "create":
             cfg = manager.create(
                 args.name, args.memory_mib, args.disk_gib, args.cpu_ips, args.iso,
-                cpu_model=args.cpu_model,
+                cpu_model=args.cpu_model, chipset=args.chipset,
             )
             print(
-                f"Created {cfg.name} with a {cfg.disk_gib} GiB sparse disk "
-                f"and CPU model {cfg.cpu_model}."
+                f"Created {cfg.name} with a {cfg.disk_gib} GiB sparse disk, "
+                f"CPU model {cfg.cpu_model}, and {cfg.chipset} chipset."
             )
         elif args.command == "list":
             for cfg in manager.list_vms():
@@ -77,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Name: {cfg.name}\nBackend: {cfg.backend}\n"
                 f"State: {'running' if manager.is_running(cfg.name) else 'stopped'}\n"
                 f"RAM: {cfg.memory_mib} MiB\nCPU model: {cfg.cpu_model}\n"
-                f"CPU IPS: {cfg.cpu_ips:,}\nDisk: {cfg.disk_path}\n"
+                f"Chipset: {cfg.chipset}\nCPU IPS: {cfg.cpu_ips:,}\nDisk: {cfg.disk_path}\n"
                 f"ISO: {cfg.iso_path or 'not attached'}\n"
                 f"Config: {manager.vm_path(cfg.name) / 'bochsrc'}"
             )
