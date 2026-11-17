@@ -829,6 +829,22 @@ class IDEStorageTests(unittest.TestCase):
         with self.assertRaisesRegex(VMError, "CD-ROM position"):
             self.manager.create("bad-cdrom-slot", cdrom_slot="ata2-master")
 
+    def test_custom_config_cannot_change_managed_ide_disk_geometry(self):
+        cfg = self.manager.create("geometry-guard", secondary_disk_gib=1)
+        generated = self._render(cfg)
+        primary_cylinders = disk_geometry(cfg.disk_gib)[0]
+        secondary_cylinders = disk_geometry(cfg.secondary_disk_gib)[0]
+        tampered_primary = generated.replace(
+            f"cylinders={primary_cylinders}", "cylinders=1", 1
+        )
+        with self.assertRaisesRegex(VMError, "ata0-master geometry"):
+            self.manager.save_custom_bochsrc(cfg.name, tampered_primary)
+        tampered_secondary = generated.replace(
+            f"cylinders={secondary_cylinders}", "cylinders=1", 1
+        )
+        with self.assertRaisesRegex(VMError, "ata1-master geometry"):
+            self.manager.save_custom_bochsrc(cfg.name, tampered_secondary)
+
     def test_secondary_disk_changes_are_blocked_for_running_or_custom_config_vms(self):
         cfg = self.manager.create("ide-running")
         fake = self.root / "fake-bochs"
