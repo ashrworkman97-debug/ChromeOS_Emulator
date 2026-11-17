@@ -110,16 +110,24 @@ class UpdateFlowTests(unittest.TestCase):
             ("project/pyproject.toml", "[project]\nname='chromeos-vm-studio'\n"),
             ("project/src/", None),
             ("project/src/chromeos_vm/", None),
-            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.7'\n"),
+            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.8'\n"),
         ])
         with tempfile.TemporaryDirectory() as temp:
             vm_dir = Path(temp) / "vms" / "dos-test"
             vm_dir.mkdir(parents=True)
             disk = vm_dir / "disk.raw"
+            secondary = vm_dir / "disk2.raw"
             profile = vm_dir / "vm.json"
             disk.write_bytes(b"guest disk data must survive")
-            profile.write_text('{"name":"dos-test","cpu_model":"pentium","chipset":"i440bx"}\n', encoding="utf-8")
+            secondary.write_bytes(b"secondary guest disk data must survive")
+            profile.write_text(
+                '{"name":"dos-test","cpu_model":"pentium","chipset":"i440bx",'
+                '"secondary_disk_gib":4,"secondary_disk_path":"' + str(secondary) + '",'
+                '"cdrom_slot":"ata1-slave"}\n',
+                encoding="utf-8",
+            )
             disk_before = disk.read_bytes()
+            secondary_before = secondary.read_bytes()
             profile_before = profile.read_bytes()
 
             fake_result = type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
@@ -130,6 +138,7 @@ class UpdateFlowTests(unittest.TestCase):
             install.assert_called_once()
             self.assertIn("pip", install.call_args.args[0])
             self.assertEqual(disk.read_bytes(), disk_before)
+            self.assertEqual(secondary.read_bytes(), secondary_before)
             self.assertEqual(profile.read_bytes(), profile_before)
 
     def test_failed_install_does_not_advance_marker(self):
