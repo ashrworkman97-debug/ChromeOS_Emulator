@@ -827,6 +827,15 @@ class IDEStorageTests(unittest.TestCase):
         self.assertIsNone(loaded.secondary_disk_path)
         self.assertEqual(loaded.cdrom_slot, "ata0-slave")
 
+    def test_custom_config_rejects_unmanaged_ata_channels(self):
+        cfg = self.manager.create("ata-channel-guard")
+        generated = self._render(cfg)
+        with self.assertRaisesRegex(VMError, "ata2-master.*not supported"):
+            validate_bochsrc_text(
+                generated + "ata2-master: type=disk, mode=flat, path=\"/tmp/extra.raw\", "
+                "cylinders=10, heads=16, spt=63\\n"
+            )
+
     def test_ide_slot_allowlist_rejects_unknown_values(self):
         self.assertEqual(set(IDE_CDROM_SLOT_LABELS), {"ata0-slave", "ata1-slave"})
         with self.assertRaisesRegex(VMError, "CD-ROM position"):
