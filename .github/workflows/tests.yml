@@ -168,7 +168,7 @@ jobs:
                   )
               print(
                   "Bochs parsed the explicit primary/secondary IDE channels, "
-                  "initialized both configured disks and the CD-ROM slot, and "
+                  "accepted the configured secondary disk and CD-ROM slot, and "
                   f"completed its bounded benchmark (exit status {result.returncode})."
               )
           PY
@@ -277,6 +277,11 @@ jobs:
               root.update_idletasks()
               assert root.title() == "ChromeOS VM Studio"
               assert app.table.winfo_exists()
+              button_labels = {
+                  w.cget("text") for w in descendants(root) if isinstance(w, ttk.Button)
+              }
+              assert "Attach second disk…" in button_labels
+              assert "Detach second disk" in button_labels
 
               # Exercise the actual create dialog and confirm chipset choices
               # are presented by native Tk widgets, not just manager APIs.
