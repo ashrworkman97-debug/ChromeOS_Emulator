@@ -4,10 +4,12 @@ from __future__ import annotations
 import subprocess
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
 
-from .manager import CHIPSET_LABELS, CPU_MODEL_LABELS, VMError, VMManager
+from .manager import (
+    CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS, VMError, VMManager,
+)
 from .updater import UpdateResult, check_for_updates
 
 
@@ -154,6 +156,10 @@ class ChromeOSVMStudio:
                   style="PanelHint.TLabel").pack(anchor="w", pady=(0, 5))
         ttk.Button(action_panel, text="Attach ISO…", style="Action.TButton",
                    command=self.attach_iso).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Attach second disk…", style="Action.TButton",
+                   command=self.attach_secondary_disk).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Detach second disk", style="Action.TButton",
+                   command=self.detach_secondary_disk).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Attach floppy A…", style="Action.TButton",
                    command=self.attach_floppy_a).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Eject floppy A", style="Action.TButton",
@@ -253,8 +259,11 @@ class ChromeOSVMStudio:
                 if cfg.floppy_b_path:
                     media_items.append("B: " + Path(cfg.floppy_b_path).name)
                 media = " · ".join(media_items) if media_items else "None"
+                disk_label = f"{cfg.disk_gib} GiB"
+                if cfg.secondary_disk_gib is not None:
+                    disk_label += f" + {cfg.secondary_disk_gib} GiB"
                 self.table.insert("", "end", iid=cfg.name, text=cfg.name,
-                                  values=(state, f"{cfg.memory_mib} MiB", f"{cfg.disk_gib} GiB", media),
+                                  values=(state, f"{cfg.memory_mib} MiB", disk_label, media),
                                   tags=("running" if running else "stopped",))
             if selected and self.table.exists(selected):
                 self.table.selection_set(selected)
@@ -277,14 +286,17 @@ class ChromeOSVMStudio:
         name = tk.StringVar()
         ram = tk.StringVar(value="512")
         disk = tk.StringVar(value="8")
+        secondary_disk = tk.StringVar()
         iso = tk.StringVar()
         cpu_model = tk.StringVar(value=CPU_MODEL_LABELS["default"])
         chipset = tk.StringVar(value=CHIPSET_LABELS["i440fx"])
+        cdrom_slot = tk.StringVar(value=IDE_CDROM_SLOT_LABELS["ata0-slave"])
+
         ttk.Label(frame, text="Name").grid(row=0, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=name, width=34).grid(row=0, column=1, sticky="ew", pady=5)
         ttk.Label(frame, text="RAM (MiB)").grid(row=1, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=ram, width=34).grid(row=1, column=1, sticky="ew", pady=5)
-        ttk.Label(frame, text="Disk (GiB)").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="Primary disk (GiB)").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=disk, width=34).grid(row=2, column=1, sticky="ew", pady=5)
         ttk.Label(frame, text="CPU model").grid(row=3, column=0, sticky="w", pady=5)
         ttk.Combobox(frame, textvariable=cpu_model, state="readonly",
@@ -294,18 +306,26 @@ class ChromeOSVMStudio:
         ttk.Combobox(frame, textvariable=chipset, state="readonly",
                      values=tuple(CHIPSET_LABELS.values()), width=40).grid(
                          row=4, column=1, sticky="ew", pady=5)
-        ttk.Label(frame, text="Install ISO").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="CD-ROM IDE position").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Combobox(frame, textvariable=cdrom_slot, state="readonly",
+                     values=tuple(IDE_CDROM_SLOT_LABELS.values()), width=40).grid(
+                         row=5, column=1, sticky="ew", pady=5)
+        ttk.Label(frame, text="Second disk (GiB, optional)").grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Entry(frame, textvariable=secondary_disk, width=34).grid(
+            row=6, column=1, sticky="ew", pady=5)
+        ttk.Label(frame, text="Install ISO").grid(row=7, column=0, sticky="w", pady=5)
         iso_row = ttk.Frame(frame)
-        iso_row.grid(row=5, column=1, sticky="ew", pady=5)
+        iso_row.grid(row=7, column=1, sticky="ew", pady=5)
         ttk.Entry(iso_row, textvariable=iso, width=25).pack(side="left", fill="x", expand=True)
         ttk.Button(iso_row, text="Browse…", command=lambda: iso.set(filedialog.askopenfilename(
             parent=dialog, filetypes=[("Disk images", "*.iso *.img *.ima"), ("All files", "*")]))).pack(side="left", padx=(5, 0))
         ttk.Label(
             frame,
-            text=("CPU model and PCI chipset control guest-visible hardware, not emulation speed. "
-                  "Model and chipset availability depend on the installed Bochs build."),
-            foreground="#666", wraplength=440,
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(5, 10))
+            text=("The second hard disk is created as IDE channel 1 master. "
+                  "The CD-ROM can use the slave position on IDE channel 0 or 1. "
+                  "CPU and chipset selections change guest-visible hardware, not host speed."),
+            foreground="#666", wraplength=500,
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(5, 10))
 
         def create() -> None:
             try:
@@ -315,10 +335,15 @@ class ChromeOSVMStudio:
                 selected_chipset = next(
                     key for key, label in CHIPSET_LABELS.items() if label == chipset.get()
                 )
+                selected_cdrom_slot = next(
+                    key for key, label in IDE_CDROM_SLOT_LABELS.items() if label == cdrom_slot.get()
+                )
+                secondary_size = int(secondary_disk.get()) if secondary_disk.get().strip() else None
                 cfg = self.manager.create(
                     name.get().strip(), int(ram.get()), int(disk.get()),
                     iso=iso.get().strip() or None, cpu_model=selected_model,
-                    chipset=selected_chipset,
+                    chipset=selected_chipset, secondary_disk_gib=secondary_size,
+                    cdrom_slot=selected_cdrom_slot,
                 )
                 dialog.destroy()
                 self.refresh()
@@ -328,7 +353,7 @@ class ChromeOSVMStudio:
                 messagebox.showerror("Could not create VM", str(exc), parent=dialog)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=7, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=9, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Create", command=create).pack(side="right")
         frame.columnconfigure(1, weight=1)
@@ -360,7 +385,7 @@ class ChromeOSVMStudio:
             messagebox.showerror("Could not stop VM", str(exc), parent=self.root)
 
     def edit_vm(self) -> None:
-        """Edit a stopped VM's memory, CPU model, PCI chipset, and CD/DVD media."""
+        """Edit a stopped VM's CPU, chipset, CD-ROM IDE position and media."""
         name = self.selected_name()
         if not name:
             self._status("Select a virtual machine first.")
@@ -381,6 +406,7 @@ class ChromeOSVMStudio:
         cpu = tk.StringVar(value=str(cfg.cpu_ips))
         cpu_model = tk.StringVar(value=CPU_MODEL_LABELS[cfg.cpu_model])
         chipset = tk.StringVar(value=CHIPSET_LABELS[cfg.chipset])
+        cdrom_slot = tk.StringVar(value=IDE_CDROM_SLOT_LABELS[cfg.cdrom_slot])
         iso = tk.StringVar(value=cfg.iso_path or "")
 
         ttk.Label(frame, text="Memory (MiB)").grid(row=0, column=0, sticky="w", pady=6)
@@ -395,21 +421,29 @@ class ChromeOSVMStudio:
         ttk.Combobox(frame, textvariable=chipset, state="readonly",
                      values=tuple(CHIPSET_LABELS.values()), width=40).grid(
                          row=3, column=1, sticky="ew", pady=6)
-        ttk.Label(frame, text="CD/DVD image").grid(row=4, column=0, sticky="w", pady=6)
+        ttk.Label(frame, text="CD-ROM IDE position").grid(row=4, column=0, sticky="w", pady=6)
+        ttk.Combobox(frame, textvariable=cdrom_slot, state="readonly",
+                     values=tuple(IDE_CDROM_SLOT_LABELS.values()), width=40).grid(
+                         row=4, column=1, sticky="ew", pady=6)
+        ttk.Label(frame, text="CD/DVD image").grid(row=5, column=0, sticky="w", pady=6)
         media_row = ttk.Frame(frame)
-        media_row.grid(row=4, column=1, sticky="ew", pady=6)
+        media_row.grid(row=5, column=1, sticky="ew", pady=6)
         ttk.Entry(media_row, textvariable=iso, width=34).pack(side="left", fill="x", expand=True)
         ttk.Button(media_row, text="Browse…", command=lambda: iso.set(
             filedialog.askopenfilename(parent=dialog,
                 filetypes=[("Disk images", "*.iso *.img *.ima"), ("All files", "*")])
             or iso.get())).pack(side="left", padx=(5, 0))
         ttk.Button(media_row, text="Eject ISO", command=lambda: iso.set("")).pack(side="left", padx=(5, 0))
+        secondary_text = (
+            f"Secondary IDE disk: {cfg.secondary_disk_gib} GiB (IDE1 master)"
+            if cfg.secondary_disk_gib is not None else "Secondary IDE disk: not attached"
+        )
         ttk.Label(
             frame,
-            text=(f"Virtual disk: {cfg.disk_gib} GiB (disk resizing is not supported yet). "
-                  "CPU model and PCI chipset support depend on the installed Bochs build."),
-            foreground="#666", wraplength=500,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 12))
+            text=(f"Primary disk: {cfg.disk_gib} GiB. {secondary_text}. "
+                  "Detaching a secondary disk preserves disk2.raw in the VM folder."),
+            foreground="#666", wraplength=520,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 12))
 
         def save() -> None:
             try:
@@ -419,9 +453,12 @@ class ChromeOSVMStudio:
                 selected_chipset = next(
                     key for key, label in CHIPSET_LABELS.items() if label == chipset.get()
                 )
+                selected_cdrom_slot = next(
+                    key for key, label in IDE_CDROM_SLOT_LABELS.items() if label == cdrom_slot.get()
+                )
                 self.manager.update_profile(
                     name, int(ram.get()), int(cpu.get()), iso.get().strip() or None,
-                    selected_model, selected_chipset,
+                    selected_model, selected_chipset, selected_cdrom_slot,
                 )
                 dialog.destroy()
                 self.refresh()
@@ -430,7 +467,7 @@ class ChromeOSVMStudio:
                 messagebox.showerror("Could not save VM", str(exc), parent=dialog)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=6, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=7, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Save changes", command=save).pack(side="right")
         frame.columnconfigure(1, weight=1)
@@ -623,6 +660,47 @@ class ChromeOSVMStudio:
             self.refresh()
         except (VMError, OSError) as exc:
             messagebox.showerror("Could not eject floppy image", str(exc), parent=self.root)
+
+    def attach_secondary_disk(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        size = simpledialog.askinteger(
+            "Attach secondary IDE disk",
+            "Create or reattach the private IDE1-master disk (GiB):",
+            initialvalue=8, minvalue=1, maxvalue=512, parent=self.root,
+        )
+        if size is None:
+            return
+        try:
+            self.manager.attach_secondary_disk(name, size)
+            self.refresh()
+            self._status(
+                f"Attached a {size} GiB secondary disk to {name} as IDE1 master. "
+                "Any existing detached disk image was preserved."
+            )
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not attach secondary disk", str(exc), parent=self.root)
+
+    def detach_secondary_disk(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        if not messagebox.askyesno(
+            "Detach secondary IDE disk",
+            "Detach the secondary disk from the guest? Its disk2.raw file and all data "
+            "will remain in the VM folder so it can be reattached later.",
+            parent=self.root,
+        ):
+            return
+        try:
+            disk = self.manager.detach_secondary_disk(name)
+            self.refresh()
+            self._status(f"Detached {disk.name}; its data was preserved.")
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not detach secondary disk", str(exc), parent=self.root)
 
     def open_folder(self) -> None:
         name = self.selected_name()
