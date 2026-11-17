@@ -138,6 +138,14 @@ def validate_bochsrc_text(text: str) -> None:
         directive, value = (part.strip() for part in line.split(":", 1))
         if not BOCHSRC_DIRECTIVE.fullmatch(directive):
             raise VMError(f"Line {number}: invalid Bochs directive name.")
+        if (re.fullmatch(r"ata[0-3](?:-(?:master|slave))?", directive)
+                and directive not in {
+                    "ata0", "ata1", "ata0-master", "ata0-slave",
+                    "ata1-master", "ata1-slave",
+                }):
+            raise VMError(
+                f"Line {number}: IDE directive '{directive}' is not supported by this manager."
+            )
         if not value:
             raise VMError(f"Line {number}: '{directive}' has no value.")
         if value.count('"') % 2:
