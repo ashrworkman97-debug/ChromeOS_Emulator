@@ -44,6 +44,10 @@ CHIPSET_LABELS = {
     "i440fx": "Intel 440FX (default PCI)",
     "i440bx": "Intel 440BX (Pentium II-era PCI)",
 }
+IDE_CDROM_SLOT_LABELS = {
+    "ata0-slave": "Primary IDE channel · Slave",
+    "ata1-slave": "Secondary IDE channel · Slave",
+}
 BOCHSRC_MAX_BYTES = 256 * 1024
 BOCHSRC_REQUIRED = {
     "megs", "cpu", "romimage", "vgaromimage", "display_library",
@@ -83,6 +87,14 @@ def validate_chipset(chipset: str) -> None:
     if not isinstance(chipset, str) or chipset not in CHIPSET_LABELS:
         raise VMError(
             "Choose a PCI chipset supported by ChromeOS VM Studio; arbitrary chipset strings are not accepted."
+        )
+
+
+def validate_cdrom_slot(slot: str) -> None:
+    if not isinstance(slot, str) or slot not in IDE_CDROM_SLOT_LABELS:
+        raise VMError(
+            "Choose a CD-ROM position supported by ChromeOS VM Studio "
+            "(primary-channel slave or secondary-channel slave)."
         )
 
 
@@ -130,7 +142,10 @@ def validate_bochsrc_text(text: str) -> None:
             raise VMError(f"Line {number}: '{directive}' has no value.")
         if value.count('"') % 2:
             raise VMError(f"Line {number}: unmatched double quote.")
-        if directive in BOCHSRC_REQUIRED or directive in {"floppya", "floppyb", "pci"}:
+        if directive in BOCHSRC_REQUIRED or directive in {
+            "floppya", "floppyb", "pci", "ata0", "ata1",
+            "ata0-slave", "ata1-master", "ata1-slave",
+        }:
             if directive in seen:
                 raise VMError(f"Line {number}: duplicate directive '{directive}'.")
             seen.add(directive)
@@ -177,6 +192,36 @@ def validate_bochsrc_text(text: str) -> None:
     for required in ("type=disk", "mode=flat", "path=", "cylinders=", "heads=", "spt="):
         if required not in disk.replace(" ", ""):
             raise VMError(f"The 'ata0-master' directive must include {required}.")
+    # ATA0 and ATA1 are the standard primary/secondary IDE channels. They are
+    # optional here for compatibility with older user-authored bochsrc files;
+    # newly generated files write both explicitly.
+    controller_defaults = {
+        "ata0": ("0x1f0", "0x3f0", "14"),
+        "ata1": ("0x170", "0x370", "15"),
+    }
+    for controller, (io1, io2, irq) in controller_defaults.items():
+        if controller in values:
+            value = values[controller].replace(" ", "").lower()
+            if (not re.search(r"enabled=1\\b", value)
+                    or f"ioaddr1={io1}" not in value
+                    or f"ioaddr2={io2}" not in value
+                    or f"irq={irq}" not in value):
+                raise VMError(
+                    f"The '{controller}' controller must use its standard enabled IDE channel addresses and IRQ."
+                )
+
+    if "ata1-master" in values:
+        secondary = values["ata1-master"].replace(" ", "")
+        for required in ("type=disk", "mode=flat", "path=", "cylinders=", "heads=", "spt="):
+            if required not in secondary:
+                raise VMError(f"The 'ata1-master' directive must include {required}.")
+
+    for slot in ("ata0-slave", "ata1-slave"):
+        if slot in values:
+            device = values[slot].replace(" ", "")
+            if not all(item in device for item in ("type=cdrom", "path=", "status=inserted")):
+                raise VMError(f"The '{slot}' directive must describe an inserted CD-ROM with a path.")
+
     if not values["display_library"] or not values["vga"] or not values["boot"] or not values["log"]:
         raise VMError("Display, VGA, boot, and log directives must have values.")
 
@@ -214,6 +259,9 @@ class VMConfig:
     memory_mib: int
     disk_gib: int
     disk_path: str
+    secondary_disk_gib: int | None = None
+    secondary_disk_path: str | None = None
+    cdrom_slot: str = "ata0-slave"
     iso_path: str | None = None
     floppy_a_path: str | None = None
     floppy_b_path: str | None = None
@@ -236,6 +284,16 @@ class VMConfig:
         validate_resources(config.memory_mib, config.disk_gib, config.cpu_ips)
         validate_cpu_model(config.cpu_model)
         validate_chipset(config.chipset)
+        validate_cdrom_slot(config.cdrom_slot)
+        if config.secondary_disk_gib is None:
+            if config.secondary_disk_path is not None:
+                raise VMError("A secondary disk path cannot be set without a secondary disk size.")
+        else:
+            if type(config.secondary_disk_gib) is not int:
+                raise VMError("The secondary disk size must be a whole number of GiB.")
+            disk_geometry(config.secondary_disk_gib)
+            if not isinstance(config.secondary_disk_path, str) or not config.secondary_disk_path:
+                raise VMError("The secondary disk profile must contain its private disk path.")
         if config.backend != "bochs" or config.disk_format != "raw":
             raise VMError("This version supports the Bochs backend and raw disks only.")
         if not isinstance(config.disk_path, str) or not config.disk_path:
@@ -289,11 +347,18 @@ class VMManager:
 
     def create(self, name: str, memory_mib: int = 512, disk_gib: int = 8,
                cpu_ips: int = 10_000_000, iso: Path | str | None = None,
-               cpu_model: str = "default", chipset: str = "i440fx") -> VMConfig:
+               cpu_model: str = "default", chipset: str = "i440fx",
+               secondary_disk_gib: int | None = None,
+               cdrom_slot: str = "ata0-slave") -> VMConfig:
         validate_name(name)
         validate_resources(memory_mib, disk_gib, cpu_ips)
         validate_cpu_model(cpu_model)
         validate_chipset(chipset)
+        validate_cdrom_slot(cdrom_slot)
+        if secondary_disk_gib is not None:
+            if type(secondary_disk_gib) is not int:
+                raise VMError("The secondary disk size must be a whole number of GiB.")
+            disk_geometry(secondary_disk_gib)
         iso_value = self._validate_iso(iso) if iso else None
         directory = self.vm_path(name)
         if directory.exists():
@@ -304,9 +369,21 @@ class VMManager:
             _cylinders, _heads, _sectors, image_bytes = disk_geometry(disk_gib)
             with disk.open("xb") as stream:
                 stream.truncate(image_bytes)
-            config = VMConfig(name=name, memory_mib=memory_mib, disk_gib=disk_gib,
-                              disk_path=str(disk.resolve()), iso_path=iso_value,
-                              cpu_ips=cpu_ips, cpu_model=cpu_model, chipset=chipset)
+            secondary_disk_path = None
+            if secondary_disk_gib is not None:
+                secondary = directory / "disk2.raw"
+                _c2, _h2, _s2, secondary_bytes = disk_geometry(secondary_disk_gib)
+                with secondary.open("xb") as stream:
+                    stream.truncate(secondary_bytes)
+                secondary_disk_path = str(secondary.resolve())
+            config = VMConfig(
+                name=name, memory_mib=memory_mib, disk_gib=disk_gib,
+                disk_path=str(disk.resolve()), iso_path=iso_value,
+                secondary_disk_gib=secondary_disk_gib,
+                secondary_disk_path=secondary_disk_path,
+                cdrom_slot=cdrom_slot,
+                cpu_ips=cpu_ips, cpu_model=cpu_model, chipset=chipset,
+            )
             self._save(config)
             (directory / "logs").mkdir()
             (directory / "runtime").mkdir()
@@ -379,6 +456,60 @@ class VMManager:
         self._save(updated)
         return updated
 
+    def attach_secondary_disk(self, name: str, disk_gib: int) -> VMConfig:
+        """Create or reattach the private secondary raw disk on IDE1 master."""
+        cfg = self.load(name)
+        if self.is_running(name):
+            raise VMError("Stop the VM before changing IDE storage.")
+        if self.custom_bochsrc_path(name).exists():
+            raise VMError("Restore the generated Bochs config before changing IDE storage.")
+        if cfg.secondary_disk_path is not None:
+            raise VMError("This VM already has a secondary IDE disk attached.")
+        _cylinders, _heads, _sectors, expected_bytes = disk_geometry(disk_gib)
+        disk = self.vm_path(name) / "disk2.raw"
+        created = False
+        if disk.is_symlink():
+            raise VMError("The secondary disk path is a symlink; refusing to attach it.")
+        if disk.exists():
+            if not disk.is_file() or disk.stat().st_nlink != 1:
+                raise VMError("The detached secondary disk is not a private regular file.")
+            if disk.stat().st_size != expected_bytes:
+                raise VMError("The existing detached secondary disk has a different size.")
+        else:
+            with disk.open("xb") as stream:
+                stream.truncate(expected_bytes)
+            created = True
+        updated = VMConfig(**{
+            **asdict(cfg),
+            "secondary_disk_gib": disk_gib,
+            "secondary_disk_path": str(disk.resolve()),
+        })
+        try:
+            self._save(updated)
+        except Exception:
+            if created:
+                disk.unlink(missing_ok=True)
+            raise
+        return updated
+
+    def detach_secondary_disk(self, name: str) -> Path:
+        """Detach disk2.raw from the guest but preserve its data in the VM folder."""
+        cfg = self.load(name)
+        if self.is_running(name):
+            raise VMError("Stop the VM before changing IDE storage.")
+        if self.custom_bochsrc_path(name).exists():
+            raise VMError("Restore the generated Bochs config before changing IDE storage.")
+        if cfg.secondary_disk_path is None:
+            raise VMError("This VM has no secondary IDE disk attached.")
+        disk = self.validate_secondary_disk_image(name, cfg)
+        updated = VMConfig(**{
+            **asdict(cfg),
+            "secondary_disk_gib": None,
+            "secondary_disk_path": None,
+        })
+        self._save(updated)
+        return disk
+
     def read_bochsrc(self, name: str) -> str:
         self.load(name)
         custom = self.custom_bochsrc_path(name)
@@ -399,6 +530,9 @@ class VMManager:
 
     def _expected_disk_path(self, name: str) -> Path:
         return (self.vm_path(name) / "disk.raw").resolve()
+
+    def _expected_secondary_disk_path(self, name: str) -> Path:
+        return (self.vm_path(name) / "disk2.raw").resolve()
 
     def validate_bochsrc_for_vm(self, name: str, text: str) -> None:
         """Validate the custom config without allowing it to redirect the managed disk."""
@@ -426,6 +560,41 @@ class VMManager:
                 "The ata0-master disk must remain at this VM's private disk.raw path. "
                 "Use the storage tools to manage guest disks; custom configs cannot redirect it."
             )
+
+        def configured_path(directive: str) -> str | None:
+            for raw_line in text.splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or ":" not in line:
+                    continue
+                current, value = (part.strip() for part in line.split(":", 1))
+                if current == directive:
+                    match = re.search(r'\\bpath\\s*=\\s*"([^"]*)"', value)
+                    return match.group(1).replace("\\\\", "\\") if match else None
+            return None
+
+        secondary_value = configured_path("ata1-master")
+        if cfg.secondary_disk_path:
+            if not secondary_value or Path(secondary_value).resolve() != self._expected_secondary_disk_path(name):
+                raise VMError(
+                    "The ata1-master disk must remain at this VM's private disk2.raw path."
+                )
+        elif secondary_value:
+            raise VMError("A custom config cannot attach an unmanaged secondary IDE disk.")
+
+        cdrom_slots = [
+            slot for slot in ("ata0-slave", "ata1-slave")
+            if any(line.strip().startswith(slot + ":") for line in text.splitlines())
+        ]
+        if cfg.iso_path:
+            if cdrom_slots != [cfg.cdrom_slot]:
+                raise VMError(
+                    f"The CD-ROM must remain in the selected {cfg.cdrom_slot} IDE position."
+                )
+            cdrom_value = configured_path(cfg.cdrom_slot)
+            if not cdrom_value or Path(cdrom_value).resolve() != Path(cfg.iso_path).resolve():
+                raise VMError("The CD-ROM image must remain the ISO attached in this VM's profile.")
+        elif cdrom_slots:
+            raise VMError("A custom config cannot attach an unmanaged CD-ROM image.")
 
         if cfg.floppy_a_path:
             floppy_value = None
@@ -481,6 +650,34 @@ class VMManager:
             raise VMError("The attached floppy B image path changed after it was selected; reattach it before booting.")
         return resolved
 
+    def validate_secondary_disk_image(self, name: str, config: VMConfig | None = None) -> Path | None:
+        """Validate the optional private IDE1-master disk before Bochs opens it."""
+        cfg = config or self.load(name)
+        if cfg.secondary_disk_path is None or cfg.secondary_disk_gib is None:
+            return None
+        directory = self.vm_path(name)
+        if directory.is_symlink() or directory.resolve().parent != self.home.resolve():
+            raise VMError("The VM directory is outside the private storage folder; refusing to open its secondary disk.")
+        expected = self._expected_secondary_disk_path(name)
+        try:
+            configured = Path(cfg.secondary_disk_path).resolve()
+        except (OSError, TypeError) as exc:
+            raise VMError(f"The VM profile has an invalid secondary disk path: {exc}") from exc
+        if configured != expected:
+            raise VMError("The secondary disk must remain at this VM's private disk2.raw path.")
+        disk = self.vm_path(name) / "disk2.raw"
+        if disk.is_symlink() or not disk.is_file():
+            raise VMError("The VM's secondary disk is missing or is not a regular file.")
+        info = disk.stat()
+        if info.st_nlink != 1:
+            raise VMError("The secondary disk has additional hard links; refusing to risk modifying another file.")
+        expected_bytes = disk_geometry(cfg.secondary_disk_gib)[3]
+        if info.st_size != expected_bytes:
+            raise VMError(
+                f"The secondary disk size is {info.st_size:,} bytes, but its profile requires {expected_bytes:,} bytes."
+            )
+        return disk.resolve()
+
     def validate_disk_image(self, name: str, config: VMConfig | None = None) -> Path:
         """Refuse missing, redirected, linked, or truncated managed disk images."""
         cfg = config or self.load(name)
@@ -526,7 +723,8 @@ class VMManager:
 
     def update_profile(self, name: str, memory_mib: int, cpu_ips: int,
                        iso: Path | str | None, cpu_model: str | None = None,
-                       chipset: str | None = None) -> VMConfig:
+                       chipset: str | None = None,
+                       cdrom_slot: str | None = None) -> VMConfig:
         """Update editable profile fields for a stopped VM; never resize its disk."""
         cfg = self.load(name)
         if self.is_running(name):
@@ -538,6 +736,8 @@ class VMManager:
         selected_chipset = cfg.chipset if chipset is None else chipset
         validate_cpu_model(selected_cpu_model)
         validate_chipset(selected_chipset)
+        selected_cdrom_slot = cfg.cdrom_slot if cdrom_slot is None else cdrom_slot
+        validate_cdrom_slot(selected_cdrom_slot)
         iso_value = self._validate_iso(iso) if iso else None
         updated = VMConfig(**{
             **asdict(cfg),
@@ -545,6 +745,7 @@ class VMManager:
             "cpu_ips": cpu_ips,
             "cpu_model": selected_cpu_model,
             "chipset": selected_chipset,
+            "cdrom_slot": selected_cdrom_slot,
             "iso_path": iso_value,
         })
         self._save(updated)
@@ -616,6 +817,8 @@ class VMManager:
             f"megs: {cfg.memory_mib}",
             f"cpu: {cpu_model}count=1, ips={cfg.cpu_ips}, reset_on_triple_fault=1",
             f"pci: enabled=1, chipset={cfg.chipset}",
+            "ata0: enabled=1, ioaddr1=0x1f0, ioaddr2=0x3f0, irq=14",
+            "ata1: enabled=1, ioaddr1=0x170, ioaddr2=0x370, irq=15",
         ]
         bios = self._find_bios("BIOS-bochs-latest")
         vgabios = self._find_bios("VGABIOS-lgpl-latest")
@@ -637,6 +840,12 @@ class VMManager:
         cylinders, heads, sectors, _image_bytes = disk_geometry(cfg.disk_gib)
         lines.append('ata0-master: type=disk, mode=flat, path=' + bochs_quote(cfg.disk_path) +
                      f", cylinders={cylinders}, heads={heads}, spt={sectors}, translation=auto")
+        if cfg.secondary_disk_path and cfg.secondary_disk_gib is not None:
+            c2, h2, s2, _bytes2 = disk_geometry(cfg.secondary_disk_gib)
+            lines.append(
+                "ata1-master: type=disk, mode=flat, path=" + bochs_quote(cfg.secondary_disk_path)
+                + f", cylinders={c2}, heads={h2}, spt={s2}, translation=auto"
+            )
         if cfg.floppy_a_path:
             lines.append(
                 "floppya: image=" + bochs_quote(cfg.floppy_a_path)
@@ -648,7 +857,9 @@ class VMManager:
                 + ", status=inserted, write_protected=1"
             )
         if cfg.iso_path:
-            lines.append('ata0-slave: type=cdrom, path=' + bochs_quote(cfg.iso_path) + ", status=inserted")
+            lines.append(
+                f"{cfg.cdrom_slot}: type=cdrom, path=" + bochs_quote(cfg.iso_path) + ", status=inserted"
+            )
         boot_order = ["floppy"] if cfg.floppy_a_path else []
         if cfg.iso_path:
             boot_order.append("cdrom")
@@ -791,6 +1002,7 @@ class VMManager:
         if not executable:
             raise VMError("Bochs was not found. Install it with: sudo apt install bochs bochs-sdl")
         self.validate_disk_image(name, cfg)
+        self.validate_secondary_disk_image(name, cfg)
         self.validate_floppy_image(name, cfg)
         self.validate_floppy_b_image(name, cfg)
         self.write_bochsrc(cfg)
