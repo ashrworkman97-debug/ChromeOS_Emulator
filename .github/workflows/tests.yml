@@ -129,6 +129,50 @@ jobs:
               )
           PY
 
+      - name: Parse and initialize secondary IDE disk and CD-ROM channel with real Bochs
+        run: |
+          PYTHONPATH=src python3 - <<'PY'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from chromeos_vm.manager import VMManager
+
+          with tempfile.TemporaryDirectory() as temp:
+              manager = VMManager(Path(temp) / "vms")
+              iso = Path(temp) / "install.iso"
+              iso.write_bytes(b"test ISO image")
+              vm = manager.create(
+                  "dual-ide-smoke", memory_mib=128, disk_gib=1,
+                  secondary_disk_gib=1, iso=iso, cdrom_slot="ata1-slave",
+              )
+              assert Path(vm.secondary_disk_path).is_file()
+              config = manager.render_bochsrc(vm)
+              assert "ata0: enabled=1, ioaddr1=0x1f0, ioaddr2=0x3f0, irq=14" in config
+              assert "ata1: enabled=1, ioaddr1=0x170, ioaddr2=0x370, irq=15" in config
+              assert "ata1-master: type=disk" in config
+              assert 'ata1-slave: type=cdrom, path="' + str(iso.resolve()) in config
+              config += "\nspeaker: enabled=0\n"
+              config_path = manager.vm_path(vm.name) / "bochsrc.ide-ci"
+              config_path.write_text(config, encoding="utf-8")
+              result = subprocess.run(
+                  ["xvfb-run", "-a", "env", "SDL_VIDEODRIVER=x11",
+                   "bochs", "-benchmark", "1", "-q", "-f", str(config_path)],
+                  capture_output=True, text=True, timeout=45, check=False,
+              )
+              log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+              log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+              if "cpu loop quit" not in log_text or ">>PANIC<<" in log_text:
+                  raise SystemExit(
+                      "Bochs dual-IDE configuration failed:\n"
+                      + result.stdout[-3000:] + result.stderr[-3000:] + log_text[-8000:]
+                  )
+              print(
+                  "Bochs parsed the explicit primary/secondary IDE channels, "
+                  "initialized both configured disks and the CD-ROM slot, and "
+                  f"completed its bounded benchmark (exit status {result.returncode})."
+              )
+          PY
+
       - name: Parse and initialize each exposed CPU model with real Bochs
         run: |
           PYTHONPATH=src python3 - <<'PY'
@@ -219,7 +263,7 @@ jobs:
           from tkinter import ttk
           from pathlib import Path
           from chromeos_vm.gui import ChromeOSVMStudio
-          from chromeos_vm.manager import CHIPSET_LABELS, VMManager
+          from chromeos_vm.manager import CHIPSET_LABELS, IDE_CDROM_SLOT_LABELS, VMManager
 
           def descendants(widget):
               for child in widget.winfo_children():
@@ -241,6 +285,7 @@ jobs:
               create_dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
               create_combos = [w for w in descendants(create_dialog) if isinstance(w, ttk.Combobox)]
               assert any(set(CHIPSET_LABELS.values()).issubset(set(w.cget("values"))) for w in create_combos)
+              assert any(set(IDE_CDROM_SLOT_LABELS.values()).issubset(set(w.cget("values"))) for w in create_combos)
               create_dialog.destroy()
 
               manager.create("dos-test", memory_mib=128, disk_gib=1)
@@ -256,7 +301,8 @@ jobs:
               edit_dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
               edit_combos = [w for w in descendants(edit_dialog) if isinstance(w, ttk.Combobox)]
               assert any(set(CHIPSET_LABELS.values()).issubset(set(w.cget("values"))) for w in edit_combos)
+              assert any(set(IDE_CDROM_SLOT_LABELS.values()).issubset(set(w.cget("values"))) for w in edit_combos)
               edit_dialog.destroy()
               root.destroy()
-          print("Native Tk GUI and PCI chipset dialog smoke test passed.")
+          print("Native Tk GUI, PCI chipset, and IDE CD-ROM position dialog smoke test passed.")
           PY
