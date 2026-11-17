@@ -729,16 +729,19 @@ class IDEStorageTests(unittest.TestCase):
         attached = self.manager.attach_secondary_disk(cfg.name, 1)
         disk = Path(attached.secondary_disk_path)
         self.assertTrue(disk.is_file())
-        disk.write_bytes(b"preserved test data")
+        with disk.open("r+b") as stream:
+            stream.write(b"preserved test data")
         detached_path = self.manager.detach_secondary_disk(cfg.name)
         self.assertEqual(detached_path, disk.resolve())
         self.assertIsNone(self.manager.load(cfg.name).secondary_disk_path)
-        self.assertEqual(disk.read_bytes(), b"preserved test data")
+        with disk.open("rb") as stream:
+            self.assertEqual(stream.read(19), b"preserved test data")
         with self.assertRaisesRegex(VMError, "different size"):
             self.manager.attach_secondary_disk(cfg.name, 2)
         reattached = self.manager.attach_secondary_disk(cfg.name, 1)
         self.assertEqual(reattached.secondary_disk_path, str(disk.resolve()))
-        self.assertEqual(disk.read_bytes(), b"preserved test data")
+        with disk.open("rb") as stream:
+            self.assertEqual(stream.read(19), b"preserved test data")
 
     def test_secondary_disk_size_is_bounded(self):
         with self.assertRaisesRegex(VMError, "between 1 and 512"):
