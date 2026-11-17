@@ -776,7 +776,7 @@ class IDEStorageTests(unittest.TestCase):
         invented = no_disk_config.replace(
             "boot: disk",
             f'ata1-master: type=disk, mode=flat, path="{outside.resolve()}", '
-            "cylinders=100, heads=16, spt=63\\nboot: disk",
+            "cylinders=100, heads=16, spt=63\nboot: disk",
         )
         with self.assertRaisesRegex(VMError, "unmanaged secondary IDE disk"):
             self.manager.save_custom_bochsrc(no_disk.name, invented)
@@ -831,24 +831,20 @@ class IDEStorageTests(unittest.TestCase):
 
     def test_secondary_disk_changes_are_blocked_for_running_or_custom_config_vms(self):
         cfg = self.manager.create("ide-running")
-        process, config_file, ticks = ManagerTests()._spawn_marked_process(cfg.name) if False else (None, None, None)
         fake = self.root / "fake-bochs"
-        fake.write_text(f"#!{sys.executable}\\nimport time\\ntime.sleep(30)\\n")
+        fake.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(30)\n")
         fake.chmod(0o755)
-        with patch.object(self.manager, "_find_bios",
-                          side_effect=[Path("/mock/BIOS-bochs-latest"),
-                                       Path("/mock/vgabios/vgabios.bin")]):
-            # Use the manager's real launcher identity checks with a long-lived mock.
-            with patch.object(self.manager, "find_bochs", return_value=str(fake)):
-                with patch.object(self.manager, "_find_bios",
-                                  side_effect=[Path("/mock/BIOS-bochs-latest"),
-                                               Path("/mock/vgabios/vgabios.bin")]):
-                    self.manager.start(cfg.name)
+        # Use the manager's real launcher identity checks with a long-lived mock.
+        with patch.object(self.manager, "find_bochs", return_value=str(fake)):
+            with patch.object(self.manager, "_find_bios",
+                              side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                           Path("/mock/vgabios/vgabios.bin")]):
+                self.manager.start(cfg.name)
         with self.assertRaisesRegex(VMError, "Stop the VM"):
             self.manager.attach_secondary_disk(cfg.name, 1)
         self.manager.stop(cfg.name)
         generated = self._render(self.manager.load(cfg.name))
-        self.manager.save_custom_bochsrc(cfg.name, generated + "# custom\\n")
+        self.manager.save_custom_bochsrc(cfg.name, generated + "# custom\n")
         with self.assertRaisesRegex(VMError, "Restore the generated Bochs config"):
             self.manager.attach_secondary_disk(cfg.name, 1)
 
