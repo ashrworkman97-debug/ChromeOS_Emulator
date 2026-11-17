@@ -564,23 +564,45 @@ class VMManager:
                 "Use the storage tools to manage guest disks; custom configs cannot redirect it."
             )
 
-        def configured_path(directive: str) -> str | None:
+        def configured_value(directive: str) -> str | None:
             for raw_line in text.splitlines():
                 line = raw_line.strip()
                 if not line or line.startswith("#") or ":" not in line:
                     continue
                 current, value = (part.strip() for part in line.split(":", 1))
                 if current == directive:
-                    match = re.search(r'\bpath\s*=\s*"([^"]*)"', value)
-                    return match.group(1).replace("\\\\", "\\") if match else None
+                    return value
             return None
 
+        def configured_path(directive: str) -> str | None:
+            value = configured_value(directive)
+            if value is None:
+                return None
+            match = re.search(r'\bpath\s*=\s*"([^"]*)"', value)
+            return match.group(1).replace("\\\\", "\\") if match else None
+
+        def require_disk_geometry(directive: str, disk_gib: int) -> None:
+            value = configured_value(directive) or ""
+            actual = []
+            for key in ("cylinders", "heads", "spt"):
+                match = re.search(rf"\b{key}\s*=\s*(\d+)", value)
+                if not match:
+                    raise VMError(f"The {directive} geometry is incomplete.")
+                actual.append(int(match.group(1)))
+            expected = disk_geometry(disk_gib)[:3]
+            if tuple(actual) != expected:
+                raise VMError(
+                    f"The {directive} geometry must match the managed {disk_gib} GiB disk."
+                )
+
+        require_disk_geometry("ata0-master", cfg.disk_gib)
         secondary_value = configured_path("ata1-master")
         if cfg.secondary_disk_path:
             if not secondary_value or Path(secondary_value).resolve() != self._expected_secondary_disk_path(name):
                 raise VMError(
                     "The ata1-master disk must remain at this VM's private disk2.raw path."
                 )
+            require_disk_geometry("ata1-master", cfg.secondary_disk_gib)
         elif secondary_value:
             raise VMError("A custom config cannot attach an unmanaged secondary IDE disk.")
 
@@ -671,7 +693,10 @@ class VMManager:
         disk = self.vm_path(name) / "disk2.raw"
         if disk.is_symlink() or not disk.is_file():
             raise VMError("The VM's secondary disk is missing or is not a regular file.")
-        info = disk.stat()
+        try:
+            info = disk.stat()
+        except OSError as exc:
+            raise VMError(f"Could not inspect the secondary disk: {exc}") from exc
         if info.st_nlink != 1:
             raise VMError("The secondary disk has additional hard links; refusing to risk modifying another file.")
         expected_bytes = disk_geometry(cfg.secondary_disk_gib)[3]
