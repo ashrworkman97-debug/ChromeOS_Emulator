@@ -8,6 +8,21 @@ This project is at an early stage. The first usable backend is [Bochs](https://b
 
 Select a VM in the library and choose **Edit VM…**. Stop the VM before changing settings. The editor can change RAM, Bochs CPU IPS, the pre-defined x86 CPU model, and the attached CD/DVD image; use **Eject ISO** to clear CD/DVD media. CPU model choices include 386SX, 486DX4, Pentium/Pentium MMX, AMD K6-2, Pentium II/III/4, Core Duo T2400, and Atom N270, plus the Bochs build default. CPU IPS remains a separate timing calibration setting. The PCI chipset can be selected independently as Intel i430FX, i440FX, or i440BX; i440FX is the default. These are Bochs-documented PCI chipset models, not host CPU settings, and availability depends on PCI support in the installed Bochs build. The model changes guest-visible CPU features; it does not accelerate Bochs on the Chromebook. The **Attach/Eject floppy A** and **Attach/Eject floppy B** controls manage two raw floppy drives separately. Bochs supports standard 160K through 2.88M image capacities; the manager checks exact sizes and attaches both images write-protected by default. BIOS floppy boot uses drive A, so the boot order tries A first when present, then CD/DVD if present, then hard disk. Drive B remains available as secondary media to guests that support it. Virtual disk resizing is not supported yet.
 
+## IDE storage topology
+
+ChromeOS VM Studio now exposes a conservative two-channel IDE layout using Bochs' documented ATA devices:
+
+- **IDE channel 0 master (ata0-master):** the VM's primary private disk.raw.
+- **IDE channel 1 master (ata1-master):** an optional second private sparse disk2.raw.
+- **CD-ROM slave:** choose the primary-channel slave (ata0-slave) or secondary-channel slave (ata1-slave) in New VM or Edit VM.
+- **IDE controllers:** generated configs explicitly enable the standard primary and secondary legacy IDE ports and IRQs. This is ordinary emulated PC IDE, not SATA/AHCI.
+
+New VM can create the second disk immediately. For an existing stopped VM, choose **Attach second disk…** and enter a size from 1–512 GiB. **Detach second disk** removes it from the guest profile but deliberately keeps disk2.raw and its data in the VM folder; it can be reattached at the same size. Permanently deleting the VM remains a separate confirmed operation. The second disk is checked for a private path, regular-file type, link count, and exact geometry-derived size before Bochs opens it.
+
+CLI examples: chromeos-vm create retro-pc --disk-gib 8 --secondary-disk-gib 4 --cdrom-slot ata1-slave; chromeos-vm attach-disk retro-pc --disk-gib 4; chromeos-vm detach-disk retro-pc.
+
+Detaching never erases the secondary disk. The CD-ROM slot can be changed in **Edit VM…** while the VM is stopped and no custom bochsrc override is active.
+
 ## Advanced Bochs configuration
 
 Select a stopped VM and choose **Bochs config…** to edit the complete bochsrc text in the native manager. **Validate** runs conservative static checks for required directives, memory/IPS ranges, disk layout, and common formatting mistakes. **Save custom config** stores a separate bochsrc.custom file which is used by the next boot; the generated bochsrc remains available as a reset point.
