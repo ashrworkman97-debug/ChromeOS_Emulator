@@ -43,11 +43,13 @@ class IDEStorageCLITests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("IDE1 master", output)
         disk = self.home / "cli-existing" / "disk2.raw"
-        disk.write_bytes(b"keep this data")
+        with disk.open("r+b") as stream:
+            stream.write(b"keep this data")
         result, output = self.run_cli("detach-disk", "cli-existing")
         self.assertEqual(result, 0)
         self.assertIn("data remains", output)
-        self.assertEqual(disk.read_bytes(), b"keep this data")
+        with disk.open("rb") as stream:
+            self.assertEqual(stream.read(14), b"keep this data")
         self.assertIsNone(VMManager(self.home).load("cli-existing").secondary_disk_path)
 
     def test_cli_rejects_unknown_cdrom_position(self):
