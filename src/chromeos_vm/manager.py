@@ -202,7 +202,7 @@ def validate_bochsrc_text(text: str) -> None:
     for controller, (io1, io2, irq) in controller_defaults.items():
         if controller in values:
             value = values[controller].replace(" ", "").lower()
-            if (not re.search(r"enabled=1\\b", value)
+            if (not re.search(r"enabled=1\b", value)
                     or f"ioaddr1={io1}" not in value
                     or f"ioaddr2={io2}" not in value
                     or f"irq={irq}" not in value):
@@ -243,8 +243,8 @@ def disk_geometry(disk_gib: int) -> tuple[int, int, int, int]:
     byte length. Use 16 heads and 63 sectors/track, rounding down by < one
     cylinder (about 504 KiB) so the virtual disk is always internally valid.
     """
-    if type(disk_gib) is not int or disk_gib < MIN_DISK_GIB:
-        raise VMError("Disk size must be a positive whole number of GiB.")
+    if type(disk_gib) is not int or not MIN_DISK_GIB <= disk_gib <= MAX_DISK_GIB:
+        raise VMError(f"Disk size must be between {MIN_DISK_GIB} and {MAX_DISK_GIB} GiB.")
     heads, sectors = 16, 63
     cylinder_bytes = heads * sectors * 512
     cylinders = (disk_gib * 1024**3) // cylinder_bytes
@@ -463,10 +463,13 @@ class VMManager:
             raise VMError("Stop the VM before changing IDE storage.")
         if self.custom_bochsrc_path(name).exists():
             raise VMError("Restore the generated Bochs config before changing IDE storage.")
+        directory = self.vm_path(name)
+        if directory.is_symlink() or directory.resolve().parent != self.home.resolve():
+            raise VMError("The VM directory is outside the private storage folder; refusing to create a secondary disk.")
         if cfg.secondary_disk_path is not None:
             raise VMError("This VM already has a secondary IDE disk attached.")
         _cylinders, _heads, _sectors, expected_bytes = disk_geometry(disk_gib)
-        disk = self.vm_path(name) / "disk2.raw"
+        disk = directory / "disk2.raw"
         created = False
         if disk.is_symlink():
             raise VMError("The secondary disk path is a symlink; refusing to attach it.")
@@ -568,7 +571,7 @@ class VMManager:
                     continue
                 current, value = (part.strip() for part in line.split(":", 1))
                 if current == directive:
-                    match = re.search(r'\\bpath\\s*=\\s*"([^"]*)"', value)
+                    match = re.search(r'\bpath\s*=\s*"([^"]*)"', value)
                     return match.group(1).replace("\\\\", "\\") if match else None
             return None
 
