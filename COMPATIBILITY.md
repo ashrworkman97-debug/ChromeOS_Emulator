@@ -11,6 +11,8 @@
 | Guest family | x86 PC operating systems supported by the selected Bochs CPU/device configuration |
 | CPU model selector | Bochs default, Intel 386SX/486DX4, Pentium/Pentium MMX, AMD K6-2, Pentium II/III/4, Core Duo T2400, Atom N270 |
 | PCI chipset selector | Bochs PCI i430FX, i440FX (default), and i440BX; availability depends on installed Bochs build |
+| IDE topology | Primary disk at IDE0 master; optional secondary disk at IDE1 master; CD-ROM selectable between IDE0 slave and IDE1 slave |
+| Secondary disk | Private sparse raw disk2.raw; attach/detach preserves data; exact path, size, file type, and link count checked before boot |
 | Guest display | Bochs's own GUI window |
 | Floppy A/B | Optional raw floppy images at standard Bochs capacities; both write-protected by default; BIOS floppy boot targets A |
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
@@ -35,6 +37,12 @@ The profile editor supports Bochs' documented i430FX, i440FX, and i440BX PCI chi
 ## CPU models
 
 The native profile editor exposes Bochs' documented pre-defined models: i386, i486dx4, pentium, pentium_mmx, amd_k6_2_chomper, p2_klamath, p3_katmai, p4_willamette, core_duo_t2400_yonah, and atom_n270. The "Bochs default" choice omits `model=` and retains the package's build default. Bochs documents these names in its [pre-defined CPU model table](https://bochs.sourceforge.io/doc/docbook/user/cpu-models.html). Availability depends on the CPU level/features compiled into the installed Bochs package; the app performs static allowlist validation, and Bochs performs final validation at launch. Model selection changes the CPU presented to the guest; it does not enable hardware acceleration. Debian 13 CI runs the real Bochs binary against every exposed model and checks that BIOS/VGA/IDE initialization completes. This is configuration initialization testing, not a guest OS boot test.
+
+## IDE storage
+
+The manager explicitly enables Bochs' standard primary and secondary ATA channels. The primary hard disk is fixed at ata0-master; the optional second hard disk is fixed at ata1-master. A CD-ROM can be placed at ata0-slave or ata1-slave. The application does not claim SATA/AHCI support. The selected positions are generated using Bochs' documented ata0, ata1, and ata[0-3]-master/slave directives. The static validator checks channel addresses, IDE disk geometry fields, and CD-ROM status/path syntax; VM-aware validation pins each managed disk and CD-ROM to the corresponding profile path and slot. Debian 13 CI runs the actual Bochs executable with a second disk and the CD-ROM on IDE1 slave.
+
+Attaching a secondary disk creates a sparse raw file under the VM's private data directory. Detaching clears the profile attachment but preserves disk2.raw for later reattachment; a size mismatch is refused. It is never silently overwritten. Deleting the entire VM remains a separate confirmation-protected operation.
 
 ## Floppy media
 
