@@ -29,6 +29,17 @@ def make_archive(entries):
     return output.getvalue()
 
 
+def make_special_archive(name, file_type, linkname=""):
+    """Build a tiny tar containing a non-regular entry without extracting it."""
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        info = tarfile.TarInfo(name)
+        info.type = file_type
+        info.linkname = linkname
+        archive.addfile(info)
+    return output.getvalue()
+
+
 class SafeExtractTests(unittest.TestCase):
     def test_extracts_regular_project_files(self):
         payload = make_archive([
@@ -57,6 +68,51 @@ class SafeExtractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(updater.UpdateError):
                 updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_hard_links_and_special_files(self):
+        for file_type in (tarfile.LNKTYPE, tarfile.FIFOTYPE, tarfile.CHRTYPE, tarfile.BLKTYPE):
+            with self.subTest(file_type=file_type):
+                payload = make_special_archive(
+                    "project/special", file_type, "project/target"
+                )
+                with tempfile.TemporaryDirectory() as temp:
+                    with self.assertRaises(updater.UpdateError):
+                        updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_absolute_paths(self):
+        payload = make_archive([("/tmp/chromeos-vm-escape", "bad")])
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(updater.UpdateError):
+                updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_multiple_archive_roots(self):
+        payload = make_archive([
+            ("project/pyproject.toml", "[project]"),
+            ("unexpected/file.txt", "not part of this archive"),
+        ])
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaisesRegex(updater.UpdateError, "one repository root"):
+                updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_archive_member_count_over_limit(self):
+        payload = make_archive([
+            ("project/a.txt", "a"),
+            ("project/b.txt", "b"),
+            ("project/c.txt", "c"),
+        ])
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(updater, "MAX_ARCHIVE_FILES", 2):
+                with self.assertRaisesRegex(updater.UpdateError, "number of entries"):
+                    updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_extracted_size_over_limit_before_writing(self):
+        payload = make_archive([("project/large.txt", "123456789")])
+        with tempfile.TemporaryDirectory() as temp:
+            dest = Path(temp)
+            with patch.object(updater, "MAX_EXTRACTED_BYTES", 8):
+                with self.assertRaisesRegex(updater.UpdateError, "extraction safety limits"):
+                    updater._safe_extract(payload, dest)
+            self.assertFalse((dest / "large.txt").exists())
 
 
 class UpdateFlowTests(unittest.TestCase):
