@@ -123,7 +123,7 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 ## Roadmap
 
 1. Native Crostini desktop manager, VM library, sparse raw disks, Bochs GUI launch/stop, logs, ISO selection/ejection, editable RAM/CPU settings, and confirmed deletion. (Implemented; CI GUI smoke-tested.)
-2. Extend hardware configuration (machine family, display, IDE/ATA device choices, and removable-media behavior). (Pre-defined CPU model and PCI chipset selection are implemented and tested against Debian 13 Bochs; CD/DVD and read-only floppy A/B attachment/ejection are implemented; broader IDE topology and device selection remain.)
+2. Extend hardware configuration (machine family, display, IDE/ATA device choices, and removable-media behavior). (Pre-defined CPU model and PCI chipset selection are implemented and tested against Debian 13 Bochs; read-only floppy A/B media, two-channel IDE with an optional IDE1-master secondary disk, and selectable IDE slave CD-ROM placement are implemented; broader device selection remains.)
 3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, and static validation. (Implemented and tested.) Remaining: guest shutdown guidance and richer status diagnostics.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
 5. Storage import/export, clone, backup, and disk resizing with safeguards.
@@ -138,7 +138,7 @@ A milestone is not complete just because a command or UI control exists: tests a
 python3 -m unittest discover -s tests -v
 ```
 
-CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display, verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated hard-disk configuration, attached floppy A/B images, every CPU model, and all three PCI chipsets exposed by the app. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
+CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display, verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated primary disk, optional secondary IDE disk and CD-ROM position, attached floppy A/B images, every CPU model, and all three PCI chipsets exposed by the app. Updater tests also exercise archive path, link, entry-count, and expanded-size defenses. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
 
 ## License
 
