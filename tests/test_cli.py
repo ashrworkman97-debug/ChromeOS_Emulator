@@ -1,7 +1,7 @@
 import io
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from chromeos_vm.cli import main
@@ -16,9 +16,10 @@ class IDEStorageCLITests(unittest.TestCase):
 
     def run_cli(self, *args):
         output = io.StringIO()
-        with redirect_stdout(output):
+        errors = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(errors):
             result = main(["--home", str(self.home), *args])
-        return result, output.getvalue()
+        return result, output.getvalue() + errors.getvalue()
 
     def test_create_and_info_report_secondary_disk_and_cdrom_slot(self):
         result, output = self.run_cli(
