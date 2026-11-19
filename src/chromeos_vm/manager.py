@@ -48,6 +48,13 @@ IDE_CDROM_SLOT_LABELS = {
     "ata0-slave": "Primary IDE channel · Slave",
     "ata1-slave": "Secondary IDE channel · Slave",
 }
+BOOT_DEVICE_LABELS = {
+    "floppy": "Floppy A",
+    "cdrom": "CD/DVD",
+    "disk": "Hard disk",
+    "network": "Network (requires a configured NIC/boot ROM)",
+}
+BOOT_DEVICES = frozenset(BOOT_DEVICE_LABELS)
 BOCHSRC_MAX_BYTES = 256 * 1024
 BOCHSRC_REQUIRED = {
     "megs", "cpu", "romimage", "vgaromimage", "display_library",
@@ -96,6 +103,46 @@ def validate_cdrom_slot(slot: str) -> None:
             "Choose a CD-ROM position supported by ChromeOS VM Studio "
             "(primary-channel slave or secondary-channel slave)."
         )
+
+
+def validate_boot_order(order: tuple[str, ...] | list[str] | None) -> None:
+    """Validate Bochs' documented boot list: one to three unique device names."""
+    if order is None:
+        return
+    if not isinstance(order, (tuple, list)):
+        raise VMError("Boot order must be a list of Bochs boot-device names or automatic.")
+    if not 1 <= len(order) <= 3:
+        raise VMError("Choose between one and three boot devices.")
+    if any(not isinstance(device, str) or device not in BOOT_DEVICES for device in order):
+        raise VMError("Boot devices must be floppy, cdrom, disk, or network.")
+    if len(set(order)) != len(order):
+        raise VMError("A boot device can appear only once in the boot sequence.")
+
+
+def validate_boot_order_for_media(
+    order: tuple[str, ...] | list[str] | None,
+    *,
+    floppy_a: bool,
+    cdrom: bool,
+) -> None:
+    validate_boot_order(order)
+    if order is None:
+        return
+    if "floppy" in order and not floppy_a:
+        raise VMError("Floppy boot requires a boot image attached to floppy A.")
+    if "cdrom" in order and not cdrom:
+        raise VMError("CD/DVD boot requires an ISO attached to the virtual CD-ROM.")
+
+
+def default_boot_order(config: "VMConfig") -> tuple[str, ...]:
+    """Return the existing media-aware boot order used by legacy profiles."""
+    order: list[str] = []
+    if config.floppy_a_path:
+        order.append("floppy")
+    if config.iso_path:
+        order.append("cdrom")
+    order.append("disk")
+    return tuple(order[:3])
 
 
 def bochs_quote(value: str | Path) -> str:
@@ -162,6 +209,12 @@ def validate_bochsrc_text(text: str) -> None:
     missing = sorted(BOCHSRC_REQUIRED - seen)
     if missing:
         raise VMError("Missing required Bochs directives: " + ", ".join(missing) + ".")
+
+    boot_devices = tuple(part.strip().lower() for part in values["boot"].split(","))
+    try:
+        validate_boot_order(boot_devices)
+    except VMError as exc:
+        raise VMError("Invalid 'boot' directive: " + str(exc)) from exc
 
     try:
         memory = int(values["megs"], 10)
@@ -273,6 +326,8 @@ class VMConfig:
     iso_path: str | None = None
     floppy_a_path: str | None = None
     floppy_b_path: str | None = None
+    # None preserves the media-aware legacy default; a tuple is an explicit BIOS order.
+    boot_order: tuple[str, ...] | None = None
     cpu_ips: int = 10_000_000
     cpu_model: str = "default"
     chipset: str = "i440fx"
@@ -282,8 +337,11 @@ class VMConfig:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "VMConfig":
+        normalized = dict(raw)
+        if isinstance(normalized.get("boot_order"), list):
+            normalized["boot_order"] = tuple(normalized["boot_order"])
         try:
-            config = cls(**raw)
+            config = cls(**normalized)
         except (TypeError, ValueError) as exc:
             raise VMError(f"Invalid VM configuration: {exc}") from exc
         if config.config_version != CONFIG_VERSION:
@@ -293,6 +351,11 @@ class VMConfig:
         validate_cpu_model(config.cpu_model)
         validate_chipset(config.chipset)
         validate_cdrom_slot(config.cdrom_slot)
+        validate_boot_order_for_media(
+            config.boot_order,
+            floppy_a=bool(config.floppy_a_path),
+            cdrom=bool(config.iso_path),
+        )
         if config.secondary_disk_gib is None:
             if config.secondary_disk_path is not None:
                 raise VMError("A secondary disk path cannot be set without a secondary disk size.")
@@ -357,17 +420,20 @@ class VMManager:
                cpu_ips: int = 10_000_000, iso: Path | str | None = None,
                cpu_model: str = "default", chipset: str = "i440fx",
                secondary_disk_gib: int | None = None,
-               cdrom_slot: str = "ata0-slave") -> VMConfig:
+               cdrom_slot: str = "ata0-slave",
+               boot_order: tuple[str, ...] | None = None) -> VMConfig:
         validate_name(name)
         validate_resources(memory_mib, disk_gib, cpu_ips)
         validate_cpu_model(cpu_model)
         validate_chipset(chipset)
         validate_cdrom_slot(cdrom_slot)
+        validate_boot_order(boot_order)
         if secondary_disk_gib is not None:
             if type(secondary_disk_gib) is not int:
                 raise VMError("The secondary disk size must be a whole number of GiB.")
             disk_geometry(secondary_disk_gib)
         iso_value = self._validate_iso(iso) if iso else None
+        validate_boot_order_for_media(boot_order, floppy_a=False, cdrom=bool(iso_value))
         directory = self.vm_path(name)
         if directory.exists():
             raise VMError(f"VM '{name}' already exists.")
@@ -390,6 +456,7 @@ class VMManager:
                 secondary_disk_gib=secondary_disk_gib,
                 secondary_disk_path=secondary_disk_path,
                 cdrom_slot=cdrom_slot,
+                boot_order=tuple(boot_order) if boot_order is not None else None,
                 cpu_ips=cpu_ips, cpu_model=cpu_model, chipset=chipset,
             )
             self._save(config)
@@ -418,7 +485,11 @@ class VMManager:
             raise VMError("Stop the VM before changing its CD/DVD media.")
         if self.custom_bochsrc_path(name).exists():
             raise VMError("Restore the generated Bochs config before changing media; the custom config may reference the old ISO.")
-        updated = VMConfig(**{**asdict(cfg), "iso_path": self._validate_iso(iso) if iso else None})
+        iso_value = self._validate_iso(iso) if iso else None
+        validate_boot_order_for_media(
+            cfg.boot_order, floppy_a=bool(cfg.floppy_a_path), cdrom=bool(iso_value)
+        )
+        updated = VMConfig(**{**asdict(cfg), "iso_path": iso_value})
         self._save(updated)
         return updated
 
@@ -449,6 +520,9 @@ class VMManager:
         if self.custom_bochsrc_path(name).exists():
             raise VMError("Restore the generated Bochs config before changing floppy media; the custom config may reference another image.")
         image_path = self._validate_floppy(image) if image else None
+        validate_boot_order_for_media(
+            cfg.boot_order, floppy_a=bool(image_path), cdrom=bool(cfg.iso_path)
+        )
         updated = VMConfig(**{**asdict(cfg), "floppy_a_path": image_path})
         self._save(updated)
         return updated
@@ -461,6 +535,21 @@ class VMManager:
             raise VMError("Restore the generated Bochs config before changing floppy media; the custom config may reference another image.")
         image_path = self._validate_floppy(image) if image else None
         updated = VMConfig(**{**asdict(cfg), "floppy_b_path": image_path})
+        self._save(updated)
+        return updated
+
+    def set_boot_order(self, name: str, order: tuple[str, ...] | list[str] | None) -> VMConfig:
+        """Set an explicit BIOS boot order, or restore the automatic media-aware order."""
+        cfg = self.load(name)
+        if self.is_running(name):
+            raise VMError("Stop the VM before changing BIOS boot priority.")
+        if self.custom_bochsrc_path(name).exists():
+            raise VMError("Restore the generated Bochs config before changing BIOS boot priority.")
+        normalized = tuple(order) if order is not None else None
+        validate_boot_order_for_media(
+            normalized, floppy_a=bool(cfg.floppy_a_path), cdrom=bool(cfg.iso_path)
+        )
+        updated = VMConfig(**{**asdict(cfg), "boot_order": normalized})
         self._save(updated)
         return updated
 
@@ -665,6 +754,15 @@ class VMManager:
                     "Use the media controls to change it."
                 )
 
+        boot_value = configured_value("boot") or ""
+        actual_boot_order = tuple(part.strip().lower() for part in boot_value.split(","))
+        expected_boot_order = cfg.boot_order or default_boot_order(cfg)
+        if actual_boot_order != expected_boot_order:
+            raise VMError(
+                "The custom boot directive must match the BIOS boot order saved in this VM profile. "
+                "Use the Boot order editor to change it."
+            )
+
     def validate_floppy_image(self, name: str, config: VMConfig | None = None) -> Path | None:
         cfg = config or self.load(name)
         if cfg.floppy_a_path is None:
@@ -775,6 +873,9 @@ class VMManager:
         selected_cdrom_slot = cfg.cdrom_slot if cdrom_slot is None else cdrom_slot
         validate_cdrom_slot(selected_cdrom_slot)
         iso_value = self._validate_iso(iso) if iso else None
+        validate_boot_order_for_media(
+            cfg.boot_order, floppy_a=bool(cfg.floppy_a_path), cdrom=bool(iso_value)
+        )
         updated = VMConfig(**{
             **asdict(cfg),
             "memory_mib": memory_mib,
@@ -896,10 +997,7 @@ class VMManager:
             lines.append(
                 f"{cfg.cdrom_slot}: type=cdrom, path=" + bochs_quote(cfg.iso_path) + ", status=inserted"
             )
-        boot_order = ["floppy"] if cfg.floppy_a_path else []
-        if cfg.iso_path:
-            boot_order.append("cdrom")
-        boot_order.append("disk")
+        boot_order = cfg.boot_order or default_boot_order(cfg)
         lines.append("boot: " + ", ".join(boot_order))
         lines.extend([
             "log: " + bochs_quote((self.vm_path(cfg.name) / "logs/bochs.log").resolve()),
