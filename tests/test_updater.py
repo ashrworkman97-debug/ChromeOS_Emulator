@@ -179,7 +179,7 @@ class UpdateFlowTests(unittest.TestCase):
             profile.write_text(
                 '{"name":"dos-test","cpu_model":"pentium","chipset":"i440bx",'
                 '"secondary_disk_gib":4,"secondary_disk_path":"' + str(secondary) + '",'
-                '"cdrom_slot":"ata1-slave"}\n',
+                '"cdrom_slot":"ata1-slave","boot_order":["cdrom","disk"]}\n',
                 encoding="utf-8",
             )
             disk_before = disk.read_bytes()
