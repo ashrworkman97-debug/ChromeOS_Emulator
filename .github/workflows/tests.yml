@@ -365,7 +365,11 @@ jobs:
               boot_dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
               boot_combos = [w for w in descendants(boot_dialog) if isinstance(w, ttk.Combobox)]
               assert len(boot_combos) == 3
-              assert any(set(BOOT_DEVICE_LABELS.values()).issubset(set(w.cget("values"))) for w in boot_combos) is False
+              boot_choices = set(boot_combos[0].cget("values"))
+              assert BOOT_DEVICE_LABELS["disk"] in boot_choices
+              assert BOOT_DEVICE_LABELS["network"] in boot_choices
+              assert BOOT_DEVICE_LABELS["floppy"] not in boot_choices
+              assert BOOT_DEVICE_LABELS["cdrom"] not in boot_choices
               automatic_toggle = next(
                   w for w in descendants(boot_dialog)
                   if isinstance(w, ttk.Checkbutton) and w.cget("text").startswith("Automatic")
