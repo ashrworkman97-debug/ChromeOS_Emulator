@@ -8,7 +8,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
 
 from .manager import (
-    CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS, VMError, VMManager,
+    BOOT_DEVICE_LABELS, CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS,
+    VMError, VMManager, default_boot_order,
 )
 from .updater import UpdateResult, check_for_updates
 
@@ -168,6 +169,8 @@ class ChromeOSVMStudio:
                    command=self.attach_floppy_b).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Eject floppy B", style="Action.TButton",
                    command=self.eject_floppy_b).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Boot order…", style="Action.TButton",
+                   command=self.edit_boot_order).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Edit VM…", style="Action.TButton",
                    command=self.edit_vm).pack(fill="x", pady=3)
         self.config_button = ttk.Button(action_panel, text="Bochs config…", style="Action.TButton",
@@ -471,6 +474,137 @@ class ChromeOSVMStudio:
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Save changes", command=save).pack(side="right")
         frame.columnconfigure(1, weight=1)
+
+    def edit_boot_order(self) -> None:
+        """Edit the BIOS boot sequence using only devices attached to this VM."""
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        try:
+            cfg = self.manager.load(name)
+            if self.manager.is_running(name):
+                messagebox.showinfo(
+                    "Stop the VM first",
+                    "BIOS boot priority can only be changed while this VM is stopped.",
+                    parent=self.root,
+                )
+                return
+            if self.manager.custom_bochsrc_path(name).exists():
+                messagebox.showinfo(
+                    "Restore generated configuration",
+                    "The custom Bochs configuration currently controls the boot directive. "
+                    "Restore the generated configuration before editing BIOS boot priority.",
+                    parent=self.root,
+                )
+                return
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not edit boot order", str(exc), parent=self.root)
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"{name} — BIOS boot priority")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill="both", expand=True)
+
+        available = []
+        if cfg.floppy_a_path:
+            available.append("floppy")
+        if cfg.iso_path:
+            available.append("cdrom")
+        available.extend(("disk", "network"))
+        unused = "— not used —"
+        choices = (unused,) + tuple(BOOT_DEVICE_LABELS[item] for item in available)
+        reverse = {label: key for key, label in BOOT_DEVICE_LABELS.items()}
+        automatic = tk.BooleanVar(value=cfg.boot_order is None)
+        current = cfg.boot_order or default_boot_order(cfg)
+        values = [
+            tk.StringVar(value=BOOT_DEVICE_LABELS.get(current[index], unused)
+                         if index < len(current) else unused)
+            for index in range(3)
+        ]
+
+        ttk.Label(
+            frame, text="Choose up to three BIOS boot devices, in priority order.",
+            font=("TkDefaultFont", 11, "bold"),
+        ).pack(anchor="w", pady=(0, 8))
+        ttk.Checkbutton(
+            frame,
+            text="Automatic (Floppy A, CD/DVD, then hard disk when attached)",
+            variable=automatic,
+            command=lambda: set_editor_state(),
+        ).pack(anchor="w", pady=(0, 10))
+
+        selectors = ttk.Frame(frame)
+        selectors.pack(fill="x")
+        combos = []
+        for index, variable in enumerate(values, start=1):
+            ttk.Label(selectors, text=f"Priority {index}").grid(
+                row=index - 1, column=0, sticky="w", padx=(0, 12), pady=4
+            )
+            combo = ttk.Combobox(
+                selectors, textvariable=variable, state="readonly",
+                values=choices, width=58,
+            )
+            combo.grid(row=index - 1, column=1, sticky="ew", pady=4)
+            combos.append(combo)
+        selectors.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            frame,
+            text=("Floppy boot requires an image in drive A; CD/DVD boot requires an attached ISO. "
+                  "Network boot is passed to Bochs' boot ROM and also requires a compatible NIC/boot ROM. "
+                  "This manager does not configure a network adapter yet."),
+            foreground="#666", wraplength=560,
+        ).pack(anchor="w", pady=(10, 12))
+
+        def set_editor_state() -> None:
+            state = "disabled" if automatic.get() else "readonly"
+            for combo in combos:
+                combo.configure(state=state)
+
+        def save() -> None:
+            if automatic.get():
+                selected_order = None
+            else:
+                selected_labels = [variable.get() for variable in values]
+                used = [label != unused for label in selected_labels]
+                if any(used[index] and not all(used[:index]) for index in range(3)):
+                    messagebox.showerror(
+                        "Invalid boot order",
+                        "Fill priorities from 1 downward without gaps.",
+                        parent=dialog,
+                    )
+                    return
+                selected_order = tuple(
+                    reverse[label] for label, is_used in zip(selected_labels, used) if is_used
+                )
+                if not selected_order:
+                    messagebox.showerror(
+                        "Invalid boot order", "Choose at least one boot device or enable Automatic.",
+                        parent=dialog,
+                    )
+                    return
+            try:
+                self.manager.set_boot_order(name, selected_order)
+            except (VMError, OSError) as exc:
+                messagebox.showerror("Could not save boot order", str(exc), parent=dialog)
+                return
+            dialog.destroy()
+            self.refresh()
+            if selected_order is None:
+                self._status(f"Restored automatic BIOS boot priority for {name}.")
+            else:
+                self._status(f"Saved BIOS boot order for {name}: " + ", ".join(selected_order) + ".")
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(6, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(buttons, text="Save boot order", style="Primary.TButton",
+                   command=save).pack(side="right", padx=(0, 6))
+        set_editor_state()
 
     def edit_bochs_config(self) -> None:
         """Edit a stopped VM's custom bochsrc; generated settings remain recoverable."""
