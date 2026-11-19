@@ -166,7 +166,7 @@ class UpdateFlowTests(unittest.TestCase):
             ("project/pyproject.toml", "[project]\nname='chromeos-vm-studio'\n"),
             ("project/src/", None),
             ("project/src/chromeos_vm/", None),
-            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.8'\n"),
+            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.9'\n"),
         ])
         with tempfile.TemporaryDirectory() as temp:
             vm_dir = Path(temp) / "vms" / "dos-test"
