@@ -57,5 +57,40 @@ class IDEStorageCLITests(unittest.TestCase):
             self.run_cli("create", "bad-position", "--cdrom-slot", "ata2-master")
 
 
+    def test_create_and_set_boot_order_are_exposed_by_cli(self):
+        iso = Path(self.temp.name) / "install.iso"
+        iso.write_bytes(b"test ISO")
+        result, output = self.run_cli(
+            "create", "cli-boot", "--disk-gib", "1", "--iso", str(iso),
+            "--boot-order", "cdrom,disk",
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("BIOS boot order: cdrom, disk", output)
+        manager = VMManager(self.home)
+        self.assertEqual(manager.load("cli-boot").boot_order, ("cdrom", "disk"))
+
+        result, output = self.run_cli(
+            "set-boot-order", "cli-boot", "--order", "network,disk"
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("network, disk", output)
+        self.assertEqual(manager.load("cli-boot").boot_order, ("network", "disk"))
+
+        result, output = self.run_cli(
+            "set-boot-order", "cli-boot", "--order", "auto"
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("automatic (media-aware)", output)
+        self.assertIsNone(manager.load("cli-boot").boot_order)
+
+    def test_cli_rejects_boot_order_for_unattached_media(self):
+        result, output = self.run_cli(
+            "create", "cli-invalid-boot", "--disk-gib", "1", "--boot-order", "cdrom,disk"
+        )
+        self.assertEqual(result, 2)
+        self.assertIn("CD/DVD boot requires", output)
+        self.assertFalse((self.home / "cli-invalid-boot").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
