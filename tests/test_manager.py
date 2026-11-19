@@ -876,5 +876,103 @@ class IDEStorageTests(unittest.TestCase):
         with self.assertRaisesRegex(VMError, "Restore the generated Bochs config"):
             self.manager.attach_secondary_disk(cfg.name, 1)
 
+    def test_explicit_boot_order_round_trips_and_renders_bochs_sequence(self):
+        iso = self.root / "boot-order.iso"
+        iso.write_bytes(b"test ISO")
+        floppy = self.root / "boot-order.img"
+        floppy.write_bytes(bytes(1_440 * 1024))
+        cfg = self.manager.create("explicit-boot-order", iso=iso)
+        cfg = self.manager.set_floppy_a(cfg.name, floppy)
+        cfg = self.manager.set_boot_order(cfg.name, ("cdrom", "floppy", "disk"))
+
+        loaded = self.manager.load(cfg.name)
+        self.assertEqual(loaded.boot_order, ("cdrom", "floppy", "disk"))
+        raw = json.loads(self.manager.config_path(cfg.name).read_text(encoding="utf-8"))
+        self.assertEqual(raw["boot_order"], ["cdrom", "floppy", "disk"])
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(loaded)
+        self.assertIn("boot: cdrom, floppy, disk", generated)
+        validate_bochsrc_text(generated)
+        self.manager.validate_bochsrc_for_vm(cfg.name, generated)
+
+    def test_boot_order_accepts_network_and_rejects_invalid_or_unavailable_devices(self):
+        cfg = self.manager.create("boot-order-validation")
+        with self.assertRaisesRegex(VMError, "Floppy boot requires"):
+            self.manager.set_boot_order(cfg.name, ("floppy", "disk"))
+        with self.assertRaisesRegex(VMError, "CD/DVD boot requires"):
+            self.manager.set_boot_order(cfg.name, ("cdrom", "disk"))
+        with self.assertRaisesRegex(VMError, "only once"):
+            self.manager.set_boot_order(cfg.name, ("disk", "disk"))
+        with self.assertRaisesRegex(VMError, "one and three"):
+            self.manager.set_boot_order(cfg.name, ("network", "disk", "floppy", "cdrom"))
+        with self.assertRaisesRegex(VMError, "floppy, cdrom, disk, or network"):
+            self.manager.set_boot_order(cfg.name, ("usb", "disk"))
+        cfg = self.manager.set_boot_order(cfg.name, ("network", "disk"))
+        self.assertEqual(cfg.boot_order, ("network", "disk"))
+
+    def test_explicit_boot_devices_cannot_be_ejected_until_removed_from_order(self):
+        iso = self.root / "boot-media.iso"
+        iso.write_bytes(b"test ISO")
+        floppy = self.root / "boot-media.img"
+        floppy.write_bytes(bytes(1_440 * 1024))
+        cfg = self.manager.create("boot-media-protection", iso=iso)
+        cfg = self.manager.set_floppy_a(cfg.name, floppy)
+        self.manager.set_boot_order(cfg.name, ("floppy", "cdrom", "disk"))
+
+        with self.assertRaisesRegex(VMError, "CD/DVD boot requires"):
+            self.manager.set_iso(cfg.name, None)
+        with self.assertRaisesRegex(VMError, "Floppy boot requires"):
+            self.manager.set_floppy_a(cfg.name, None)
+
+        self.manager.set_boot_order(cfg.name, ("disk",))
+        self.manager.set_iso(cfg.name, None)
+        self.manager.set_floppy_a(cfg.name, None)
+        self.assertIsNone(self.manager.load(cfg.name).iso_path)
+        self.assertIsNone(self.manager.load(cfg.name).floppy_a_path)
+
+    def test_custom_bochsrc_cannot_change_profile_boot_priority(self):
+        iso = self.root / "custom-boot-order.iso"
+        iso.write_bytes(b"test ISO")
+        cfg = self.manager.create("custom-boot-order", iso=iso)
+        cfg = self.manager.set_boot_order(cfg.name, ("cdrom", "disk"))
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(cfg)
+        self.assertIn("boot: cdrom, disk", generated)
+        changed = generated.replace("boot: cdrom, disk", "boot: disk")
+        with self.assertRaisesRegex(VMError, "boot directive must match"):
+            self.manager.save_custom_bochsrc(cfg.name, changed)
+
+    def test_legacy_profile_without_boot_order_keeps_automatic_priority(self):
+        cfg = self.manager.create("legacy-boot-order")
+        profile = self.manager.config_path(cfg.name)
+        raw = json.loads(profile.read_text(encoding="utf-8"))
+        raw.pop("boot_order")
+        profile.write_text(json.dumps(raw), encoding="utf-8")
+        loaded = self.manager.load(cfg.name)
+        self.assertIsNone(loaded.boot_order)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(loaded)
+        self.assertIn("boot: disk", generated)
+
+    def test_static_bochsrc_boot_validator_rejects_duplicate_and_fourth_device(self):
+        cfg = self.manager.create("invalid-boot-directive")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(cfg)
+        with self.assertRaisesRegex(VMError, "only once"):
+            validate_bochsrc_text(generated.replace("boot: disk", "boot: disk, disk"))
+        with self.assertRaisesRegex(VMError, "one and three"):
+            validate_bochsrc_text(
+                generated.replace("boot: disk", "boot: network, cdrom, floppy, disk")
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
