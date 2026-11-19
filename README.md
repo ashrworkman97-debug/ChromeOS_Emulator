@@ -8,6 +8,22 @@ This project is at an early stage. The first usable backend is [Bochs](https://b
 
 Select a VM in the library and choose **Edit VM…**. Stop the VM before changing settings. The editor can change RAM, Bochs CPU IPS, the pre-defined x86 CPU model, and the attached CD/DVD image; use **Eject ISO** to clear CD/DVD media. CPU model choices include 386SX, 486DX4, Pentium/Pentium MMX, AMD K6-2, Pentium II/III/4, Core Duo T2400, and Atom N270, plus the Bochs build default. CPU IPS remains a separate timing calibration setting. The PCI chipset can be selected independently as Intel i430FX, i440FX, or i440BX; i440FX is the default. These are Bochs-documented PCI chipset models, not host CPU settings, and availability depends on PCI support in the installed Bochs build. The model changes guest-visible CPU features; it does not accelerate Bochs on the Chromebook. The **Attach/Eject floppy A** and **Attach/Eject floppy B** controls manage two raw floppy drives separately. Bochs supports standard 160K through 2.88M image capacities; the manager checks exact sizes and attaches both images write-protected by default. BIOS floppy boot uses drive A, so the boot order tries A first when present, then CD/DVD if present, then hard disk. Drive B remains available as secondary media to guests that support it. Virtual disk resizing is not supported yet.
 
+## BIOS boot priority
+
+Select a VM and choose **Boot order…** to edit the BIOS sequence. The editor accepts one to three unique devices in priority order: floppy A, CD/DVD, hard disk, or network boot ROM. **Automatic** preserves the original media-aware behavior: floppy A first when attached, then CD/DVD when attached, then the primary hard disk. A manually selected floppy or CD/DVD entry requires that media to remain attached; the manager refuses to eject a selected boot device until the order is changed. Existing profiles without a `boot_order` field remain automatic.
+
+Network boot is written as Bochs' documented `network` boot choice. It requires a compatible Bochs network adapter and boot ROM; the current manager does not configure a NIC, so network boot is an advanced option rather than a turnkey PXE setup. The app validates the sequence and passes it to Bochs; the guest firmware and installed Bochs build determine whether a particular network boot ROM is available.
+
+The CLI accepts the same sequence:
+
+```sh
+chromeos-vm create dos-installer --iso /path/to/install.iso --boot-order cdrom,disk
+chromeos-vm set-boot-order dos-installer --order disk
+chromeos-vm set-boot-order dos-installer --order auto
+```
+
+The Bochs configuration editor pins the `boot:` directive to the saved VM profile, preventing a custom config from silently changing the boot priority behind the GUI.
+
 ## IDE storage topology
 
 ChromeOS VM Studio now exposes a conservative two-channel IDE layout using Bochs' documented ATA devices:
@@ -99,7 +115,8 @@ CLI equivalents are also available:
 
 ```sh
 chromeos-vm check
-chromeos-vm create win98 --memory-mib 512 --disk-gib 8 --cpu-model pentium --chipset i440fx --iso /path/to/install.iso
+chromeos-vm create win98 --memory-mib 512 --disk-gib 8 --cpu-model pentium --chipset i440fx --iso /path/to/install.iso --boot-order cdrom,disk
+chromeos-vm set-boot-order win98 --order disk
 chromeos-vm start win98
 chromeos-vm info win98
 chromeos-vm stop win98
@@ -123,7 +140,7 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 ## Roadmap
 
 1. Native Crostini desktop manager, VM library, sparse raw disks, Bochs GUI launch/stop, logs, ISO selection/ejection, editable RAM/CPU settings, and confirmed deletion. (Implemented; CI GUI smoke-tested.)
-2. Extend hardware configuration (machine family, display, IDE/ATA device choices, and removable-media behavior). (Pre-defined CPU model and PCI chipset selection are implemented and tested against Debian 13 Bochs; read-only floppy A/B media, two-channel IDE with an optional IDE1-master secondary disk, and selectable IDE slave CD-ROM placement are implemented; broader device selection remains.)
+2. Extend hardware configuration (machine family, display, IDE/ATA device choices, and removable-media behavior). (Pre-defined CPU model and PCI chipset selection, read-only floppy A/B media, two-channel IDE storage, selectable CD-ROM placement, and the native BIOS boot-priority editor are implemented; broader device selection remains.)
 3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, and static validation. (Implemented and tested.) Remaining: guest shutdown guidance and richer status diagnostics.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
 5. Storage import/export, clone, backup, and disk resizing with safeguards.
@@ -138,7 +155,7 @@ A milestone is not complete just because a command or UI control exists: tests a
 python3 -m unittest discover -s tests -v
 ```
 
-CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display, verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated primary disk, optional secondary IDE disk and CD-ROM position, attached floppy A/B images, every CPU model, and all three PCI chipsets exposed by the app. Updater tests also exercise archive path, link, entry-count, and expanded-size defenses. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
+CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display (including the BIOS boot-order editor), verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated primary disk, optional secondary IDE disk and CD-ROM position, attached floppy A/B images, explicit BIOS boot sequences, every CPU model, and all three PCI chipsets exposed by the app. Updater tests also exercise archive path, link, entry-count, and expanded-size defenses. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
 
 ## License
 
