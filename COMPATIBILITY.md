@@ -12,6 +12,7 @@
 | CPU model selector | Bochs default, Intel 386SX/486DX4, Pentium/Pentium MMX, AMD K6-2, Pentium II/III/4, Core Duo T2400, Atom N270 |
 | PCI chipset selector | Bochs PCI i430FX, i440FX (default), and i440BX; availability depends on installed Bochs build |
 | IDE topology | Primary disk at IDE0 master; optional secondary disk at IDE1 master; CD-ROM selectable between IDE0 slave and IDE1 slave |
+| BIOS boot order | Automatic media-aware default or one to three unique devices: floppy, cdrom, disk, network; explicit floppy/CD-ROM entries require attached media |
 | Secondary disk | Private sparse raw disk2.raw; attach/detach preserves data; exact path, size, file type, and link count checked before boot |
 | Guest display | Bochs's own GUI window |
 | Floppy A/B | Optional raw floppy images at standard Bochs capacities; both write-protected by default; BIOS floppy boot targets A |
@@ -43,6 +44,12 @@ The native profile editor exposes Bochs' documented pre-defined models: i386, i4
 The manager explicitly enables Bochs' standard primary and secondary ATA channels. The primary hard disk is fixed at ata0-master; the optional second hard disk is fixed at ata1-master. A CD-ROM can be placed at ata0-slave or ata1-slave. The application does not claim SATA/AHCI support. The selected positions are generated using Bochs' documented ata0, ata1, and ata[0-3]-master/slave directives. The static validator checks channel addresses, IDE disk geometry fields, and CD-ROM status/path syntax; VM-aware validation pins each managed disk and CD-ROM to the corresponding profile path and slot. Debian 13 CI runs the actual Bochs executable with a second disk and the CD-ROM on IDE1 slave.
 
 Attaching a secondary disk creates a sparse raw file under the VM's private data directory. Detaching clears the profile attachment but preserves disk2.raw for later reattachment; a size mismatch is refused. It is never silently overwritten. Deleting the entire VM remains a separate confirmation-protected operation.
+
+## BIOS boot priority
+
+The native editor writes Bochs' documented `boot:` directive and supports up to three unique devices in order: `floppy`, `disk`, `cdrom`, or `network`. Automatic mode preserves the earlier behavior (floppy A when attached, CD/DVD when attached, then hard disk). Existing profiles without a boot-order field remain automatic. The manager refuses to eject floppy A or CD/DVD while an explicit sequence still references that device. Static validation rejects unknown, duplicate, empty, or four-device sequences; VM-aware validation also checks that floppy A and CD/DVD media exist and pins custom configs to the saved profile order.
+
+Network boot is emitted as Bochs' documented `network` boot choice, but it is not a turnkey PXE feature: a compatible NIC device/plugin and boot ROM must be configured and available in the installed Bochs build. The current GUI does not configure a NIC. See the [Bochs boot directive documentation](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html#BOCHS-PARAMETERS-BOOT).
 
 ## Floppy media
 
