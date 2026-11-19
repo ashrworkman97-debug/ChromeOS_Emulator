@@ -5,8 +5,7 @@ import sys
 from pathlib import Path
 from . import __version__
 from .manager import (
-    BOOT_DEVICE_LABELS, CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS,
-    VMError, VMManager,
+    CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS, VMError, VMManager,
 )
 
 
