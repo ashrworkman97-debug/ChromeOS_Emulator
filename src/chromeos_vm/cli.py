@@ -5,8 +5,16 @@ import sys
 from pathlib import Path
 from . import __version__
 from .manager import (
-    CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS, VMError, VMManager,
+    BOOT_DEVICE_LABELS, CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS,
+    VMError, VMManager,
 )
+
+
+def parse_boot_order(value: str) -> tuple[str, ...] | None:
+    """Parse 'auto' or a comma-separated Bochs boot-device sequence."""
+    if value.strip().lower() == "auto":
+        return None
+    return tuple(part.strip().lower() for part in value.split(","))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,7 +39,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="optional second sparse IDE hard disk size")
     create.add_argument("--cdrom-slot", choices=tuple(IDE_CDROM_SLOT_LABELS),
                         default="ata0-slave", help="IDE slave position for the CD-ROM")
+    create.add_argument(
+        "--boot-order", type=parse_boot_order, default=None,
+        help="BIOS boot order: auto or comma-separated floppy,cdrom,disk,network",
+    )
     create.add_argument("--iso", type=Path)
+    boot_order = cmds.add_parser("set-boot-order", help="set or restore a VM's BIOS boot priority")
+    boot_order.add_argument("name")
+    boot_order.add_argument("--order", type=parse_boot_order, required=True,
+                            help="auto or comma-separated floppy,cdrom,disk,network")
     attach_disk = cmds.add_parser("attach-disk", help="create or reattach the private secondary IDE disk")
     attach_disk.add_argument("name")
     attach_disk.add_argument("--disk-gib", type=int, default=8)
@@ -77,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
                 cpu_model=args.cpu_model, chipset=args.chipset,
                 secondary_disk_gib=args.secondary_disk_gib,
                 cdrom_slot=args.cdrom_slot,
+                boot_order=args.boot_order,
             )
             second = (
                 f" plus a {cfg.secondary_disk_gib} GiB IDE1-master disk"
@@ -85,7 +102,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"Created {cfg.name} with a {cfg.disk_gib} GiB primary sparse disk{second}, "
                 f"CPU model {cfg.cpu_model}, {cfg.chipset} chipset, "
-                f"and CD-ROM position {cfg.cdrom_slot}."
+                f"and CD-ROM position {cfg.cdrom_slot}. "
+                f"BIOS boot order: {', '.join(cfg.boot_order) if cfg.boot_order else 'automatic'}."
             )
         elif args.command == "list":
             for cfg in manager.list_vms():
@@ -104,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Primary disk: {cfg.disk_path}\n"
                 f"Secondary disk: {cfg.secondary_disk_path or 'not attached'}\n"
                 f"CD-ROM IDE position: {cfg.cdrom_slot}\n"
+                f"BIOS boot order: {', '.join(cfg.boot_order) if cfg.boot_order else 'automatic (media-aware)'}\n"
                 f"ISO: {cfg.iso_path or 'not attached'}\n"
                 f"Config: {manager.vm_path(cfg.name) / 'bochsrc'}"
             )
@@ -113,6 +132,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "detach-disk":
             path = manager.detach_secondary_disk(args.name)
             print(f"Detached {path.name}; disk data remains in the VM folder.")
+        elif args.command == "set-boot-order":
+            cfg = manager.set_boot_order(args.name, args.order)
+            order = ", ".join(cfg.boot_order) if cfg.boot_order else "automatic (media-aware)"
+            print(f"BIOS boot order for {cfg.name}: {order}")
         elif args.command == "start":
             print(f"Started {args.name}; Bochs PID {manager.start(args.name)}")
         elif args.command == "stop":
