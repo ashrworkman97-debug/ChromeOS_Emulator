@@ -77,6 +77,8 @@ chmod +x scripts/install-crostini.sh
 ./scripts/install-crostini.sh
 ```
 
+**Downloaded the ZIP instead of cloning?** Extract it first, then change into the extracted `ChromeOS_Emulator-main` folder before running the installer. Do not run the `git clone` or `git pull` commands for a ZIP copy.
+
 The installer uses Debian packages for Bochs, its SDL display plugin, the Bochs system BIOS, the separate VGA BIOS package, Tkinter, and Python packaging tools. On Debian 13 (Trixie), `bochsbios` installs `/usr/share/bochs/BIOS-bochs-latest`, while `vgabios` installs the standard VGA ROM at `/usr/share/vgabios/vgabios.bin`. It does **not** install Bochs' upstream default `/usr/share/bochs/VGABIOS-lgpl-latest.bin` path. The app resolves the files from Debian's package manifest and explicitly supplies both ROM paths to Bochs. It creates a Python virtual environment under `~/.local/opt/chromeos-vm-studio` and registers a desktop launcher. After installation, launch **ChromeOS VM Studio** from the ChromeOS Launcher (under Linux apps). The manager has a dark navy title banner, a cleaner VM library with colored running/stopped indicators, and a dedicated action panel. Guest desktops still launch in separate Bochs windows.
 
 If you already have the dependencies, run the app from the project directory with:
@@ -87,7 +89,7 @@ PYTHONPATH=src python3 -m chromeos_vm.gui
 
 ## Automatic updates
 
-The app checks the repository's latest `main` commit in the background shortly after launch. Automatic checks are throttled to once every 12 hours. If a newer commit exists, the updater downloads the GitHub source archive, validates and safely extracts it, and reinstalls the Python application into the existing private virtual environment. It then asks you to restart the manager to load the new code. Guest profiles and virtual disks remain in `~/.local/share/chromeos-vm-studio`; the updater does not delete or rewrite them.
+The app checks the repository's latest `main` commit in the background shortly after launch. Automatic checks are throttled to once every 12 hours. If a newer commit exists, the updater downloads the GitHub source archive, validates and safely extracts it, and reinstalls the Python application into the existing private virtual environment. It then asks you to restart the manager to load the new code. Guest profiles and virtual disks remain in `~/.local/share/chromeos-vm-studio`; the updater does not delete or rewrite them. Before pip runs, the updater reads the downloaded package version and refuses to install a lower version than the one already running; a newer branch build is kept intact while `main` catches up.
 
 Use the **Updates** button in the manager to check immediately, or run:
 
