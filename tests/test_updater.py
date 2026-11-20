@@ -159,11 +159,50 @@ class UpdateFlowTests(unittest.TestCase):
             self.assertEqual(result.status, "current")
             apply.assert_not_called()
 
+    def test_apply_update_refuses_an_older_package_version_before_pip(self):
+        sha = "d" * 40
+        payload = make_archive([
+            ("project/", None),
+            ("project/pyproject.toml",
+             "[project]\nname='chromeos-vm-studio'\nversion='0.3.7'\n"),
+            ("project/src/", None),
+            ("project/src/chromeos_vm/", None),
+        ])
+        with patch.object(updater, "INSTALLED_VERSION", "0.3.9"), \
+             patch.object(updater, "_request", return_value=payload), \
+             patch.object(updater.subprocess, "run") as install:
+            with self.assertRaisesRegex(
+                updater.DowngradePrevented, "from 0.3.9 to 0.3.7"
+            ):
+                updater.apply_update(sha)
+        install.assert_not_called()
+
+    def test_downgrade_refusal_keeps_the_installed_commit_marker(self):
+        old = "c" * 40
+        new = "d" * 40
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / "install.json"
+            marker.write_text(json.dumps({"commit": old}))
+            with patch.object(updater, "metadata_path", return_value=marker), \
+                 patch.object(updater, "latest_commit", return_value=new), \
+                 patch.object(
+                     updater, "apply_update",
+                     side_effect=updater.DowngradePrevented("refusing older release"),
+                 ) as apply:
+                result = updater.check_for_updates(force=True)
+            self.assertEqual(result.status, "current")
+            self.assertIn("refusing older release", result.message)
+            apply.assert_called_once_with(new)
+            saved = json.loads(marker.read_text())
+            self.assertEqual(saved["commit"], old)
+            self.assertIn("last_check", saved)
+
     def test_app_update_leaves_vm_profiles_and_disks_untouched(self):
         sha = "f" * 40
         payload = make_archive([
             ("project/", None),
-            ("project/pyproject.toml", "[project]\nname='chromeos-vm-studio'\n"),
+            ("project/pyproject.toml",
+             "[project]\nname='chromeos-vm-studio'\nversion='0.3.9'\n"),
             ("project/src/", None),
             ("project/src/chromeos_vm/", None),
             ("project/src/chromeos_vm/__init__.py", "__version__='0.3.9'\n"),
