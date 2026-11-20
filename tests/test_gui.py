@@ -81,5 +81,41 @@ class FloppyMediaUITests(unittest.TestCase):
         self.app.refresh.assert_called_once()
 
 
+
+class IDEStorageUITests(unittest.TestCase):
+    def setUp(self):
+        self.app = ChromeOSVMStudio.__new__(ChromeOSVMStudio)
+        self.app.root = Mock()
+        self.app.manager = Mock()
+        self.app.status = Mock()
+        self.app.selected_name = Mock(return_value="dos-test")
+        self.app.refresh = Mock()
+
+    def test_attach_secondary_disk_uses_native_size_prompt_and_manager(self):
+        with patch("chromeos_vm.gui.simpledialog.askinteger", return_value=12) as ask:
+            self.app.attach_secondary_disk()
+        ask.assert_called_once()
+        self.app.manager.attach_secondary_disk.assert_called_once_with("dos-test", 12)
+        self.app.refresh.assert_called_once()
+        self.assertIn("IDE1 master", self.app.status.set.call_args.args[0])
+
+    def test_cancel_secondary_disk_prompt_does_not_change_profile(self):
+        with patch("chromeos_vm.gui.simpledialog.askinteger", return_value=None):
+            self.app.attach_secondary_disk()
+        self.app.manager.attach_secondary_disk.assert_not_called()
+
+    def test_detach_secondary_disk_requires_confirmation_and_preserves_file(self):
+        with patch("chromeos_vm.gui.messagebox.askyesno", return_value=True):
+            self.app.manager.detach_secondary_disk.return_value = __import__("pathlib").Path("/vm/disk2.raw")
+            self.app.detach_secondary_disk()
+        self.app.manager.detach_secondary_disk.assert_called_once_with("dos-test")
+        self.app.refresh.assert_called_once()
+        self.assertIn("data was preserved", self.app.status.set.call_args.args[0])
+
+    def test_cancel_detach_does_not_change_profile(self):
+        with patch("chromeos_vm.gui.messagebox.askyesno", return_value=False):
+            self.app.detach_secondary_disk()
+        self.app.manager.detach_secondary_disk.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()

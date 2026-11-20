@@ -8,6 +8,37 @@ This project is at an early stage. The first usable backend is [Bochs](https://b
 
 Select a VM in the library and choose **Edit VM…**. Stop the VM before changing settings. The editor can change RAM, Bochs CPU IPS, the pre-defined x86 CPU model, and the attached CD/DVD image; use **Eject ISO** to clear CD/DVD media. CPU model choices include 386SX, 486DX4, Pentium/Pentium MMX, AMD K6-2, Pentium II/III/4, Core Duo T2400, and Atom N270, plus the Bochs build default. CPU IPS remains a separate timing calibration setting. The PCI chipset can be selected independently as Intel i430FX, i440FX, or i440BX; i440FX is the default. These are Bochs-documented PCI chipset models, not host CPU settings, and availability depends on PCI support in the installed Bochs build. The model changes guest-visible CPU features; it does not accelerate Bochs on the Chromebook. The **Attach/Eject floppy A** and **Attach/Eject floppy B** controls manage two raw floppy drives separately. Bochs supports standard 160K through 2.88M image capacities; the manager checks exact sizes and attaches both images write-protected by default. BIOS floppy boot uses drive A, so the boot order tries A first when present, then CD/DVD if present, then hard disk. Drive B remains available as secondary media to guests that support it. Virtual disk resizing is not supported yet.
 
+## BIOS boot priority
+
+Select a VM and choose **Boot order…** to edit the BIOS sequence. The editor accepts one to three unique devices in priority order: floppy A, CD/DVD, hard disk, or network boot ROM. **Automatic** preserves the original media-aware behavior: floppy A first when attached, then CD/DVD when attached, then the primary hard disk. A manually selected floppy or CD/DVD entry requires that media to remain attached; the manager refuses to eject a selected boot device until the order is changed. Existing profiles without a `boot_order` field remain automatic.
+
+Network boot is written as Bochs' documented `network` boot choice. It requires a compatible Bochs network adapter and boot ROM; the current manager does not configure a NIC, so network boot is an advanced option rather than a turnkey PXE setup. The app validates the sequence and passes it to Bochs; the guest firmware and installed Bochs build determine whether a particular network boot ROM is available.
+
+The CLI accepts the same sequence:
+
+```sh
+chromeos-vm create dos-installer --iso /path/to/install.iso --boot-order cdrom,disk
+chromeos-vm set-boot-order dos-installer --order disk
+chromeos-vm set-boot-order dos-installer --order auto
+```
+
+The Bochs configuration editor pins the `boot:` directive to the saved VM profile, preventing a custom config from silently changing the boot priority behind the GUI.
+
+## IDE storage topology
+
+ChromeOS VM Studio now exposes a conservative two-channel IDE layout using Bochs' documented ATA devices:
+
+- **IDE channel 0 master (ata0-master):** the VM's primary private disk.raw.
+- **IDE channel 1 master (ata1-master):** an optional second private sparse disk2.raw.
+- **CD-ROM slave:** choose the primary-channel slave (ata0-slave) or secondary-channel slave (ata1-slave) in New VM or Edit VM.
+- **IDE controllers:** generated configs explicitly enable the standard primary and secondary legacy IDE ports and IRQs. This is ordinary emulated PC IDE, not SATA/AHCI.
+
+New VM can create the second disk immediately. For an existing stopped VM, choose **Attach second disk…** and enter a size from 1–512 GiB. **Detach second disk** removes it from the guest profile but deliberately keeps disk2.raw and its data in the VM folder; it can be reattached at the same size. Permanently deleting the VM remains a separate confirmed operation. The second disk is checked for a private path, regular-file type, link count, and exact geometry-derived size before Bochs opens it.
+
+CLI examples: chromeos-vm create retro-pc --disk-gib 8 --secondary-disk-gib 4 --cdrom-slot ata1-slave; chromeos-vm attach-disk retro-pc --disk-gib 4; chromeos-vm detach-disk retro-pc.
+
+Detaching never erases the secondary disk. The CD-ROM slot can be changed in **Edit VM…** while the VM is stopped and no custom bochsrc override is active.
+
 ## Advanced Bochs configuration
 
 Select a stopped VM and choose **Bochs config…** to edit the complete bochsrc text in the native manager. **Validate** runs conservative static checks for required directives, memory/IPS ranges, disk layout, and common formatting mistakes. **Save custom config** stores a separate bochsrc.custom file which is used by the next boot; the generated bochsrc remains available as a reset point.
@@ -46,6 +77,8 @@ chmod +x scripts/install-crostini.sh
 ./scripts/install-crostini.sh
 ```
 
+**Downloaded the ZIP instead of cloning?** Extract it first, then change into the extracted `ChromeOS_Emulator-main` folder before running the installer. Do not run the `git clone` or `git pull` commands for a ZIP copy.
+
 The installer uses Debian packages for Bochs, its SDL display plugin, the Bochs system BIOS, the separate VGA BIOS package, Tkinter, and Python packaging tools. On Debian 13 (Trixie), `bochsbios` installs `/usr/share/bochs/BIOS-bochs-latest`, while `vgabios` installs the standard VGA ROM at `/usr/share/vgabios/vgabios.bin`. It does **not** install Bochs' upstream default `/usr/share/bochs/VGABIOS-lgpl-latest.bin` path. The app resolves the files from Debian's package manifest and explicitly supplies both ROM paths to Bochs. It creates a Python virtual environment under `~/.local/opt/chromeos-vm-studio` and registers a desktop launcher. After installation, launch **ChromeOS VM Studio** from the ChromeOS Launcher (under Linux apps). The manager has a dark navy title banner, a cleaner VM library with colored running/stopped indicators, and a dedicated action panel. Guest desktops still launch in separate Bochs windows.
 
 If you already have the dependencies, run the app from the project directory with:
@@ -56,7 +89,7 @@ PYTHONPATH=src python3 -m chromeos_vm.gui
 
 ## Automatic updates
 
-The app checks the repository's latest `main` commit in the background shortly after launch. Automatic checks are throttled to once every 12 hours. If a newer commit exists, the updater downloads the GitHub source archive, validates and safely extracts it, and reinstalls the Python application into the existing private virtual environment. It then asks you to restart the manager to load the new code. Guest profiles and virtual disks remain in `~/.local/share/chromeos-vm-studio`; the updater does not delete or rewrite them.
+The app checks the repository's latest `main` commit in the background shortly after launch. Automatic checks are throttled to once every 12 hours. If a newer commit exists, the updater downloads the GitHub source archive, validates and safely extracts it, and reinstalls the Python application into the existing private virtual environment. It then asks you to restart the manager to load the new code. Guest profiles and virtual disks remain in `~/.local/share/chromeos-vm-studio`; the updater does not delete or rewrite them. Before pip runs, the updater reads the downloaded package version and refuses to install a lower version than the one already running; a newer branch build is kept intact while `main` catches up.
 
 Use the **Updates** button in the manager to check immediately, or run:
 
@@ -84,7 +117,8 @@ CLI equivalents are also available:
 
 ```sh
 chromeos-vm check
-chromeos-vm create win98 --memory-mib 512 --disk-gib 8 --cpu-model pentium --chipset i440fx --iso /path/to/install.iso
+chromeos-vm create win98 --memory-mib 512 --disk-gib 8 --cpu-model pentium --chipset i440fx --iso /path/to/install.iso --boot-order cdrom,disk
+chromeos-vm set-boot-order win98 --order disk
 chromeos-vm start win98
 chromeos-vm info win98
 chromeos-vm stop win98
@@ -108,7 +142,7 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 ## Roadmap
 
 1. Native Crostini desktop manager, VM library, sparse raw disks, Bochs GUI launch/stop, logs, ISO selection/ejection, editable RAM/CPU settings, and confirmed deletion. (Implemented; CI GUI smoke-tested.)
-2. Extend hardware configuration (machine family, display, IDE/ATA device choices, and removable-media behavior). (Pre-defined CPU model and PCI chipset selection are implemented and tested against Debian 13 Bochs; CD/DVD and read-only floppy A/B attachment/ejection are implemented; broader IDE topology and device selection remain.)
+2. Extend hardware configuration (machine family, display, IDE/ATA device choices, and removable-media behavior). (Pre-defined CPU model and PCI chipset selection, read-only floppy A/B media, two-channel IDE storage, selectable CD-ROM placement, and the native BIOS boot-priority editor are implemented; broader device selection remains.)
 3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, and static validation. (Implemented and tested.) Remaining: guest shutdown guidance and richer status diagnostics.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
 5. Storage import/export, clone, backup, and disk resizing with safeguards.
@@ -123,7 +157,7 @@ A milestone is not complete just because a command or UI control exists: tests a
 python3 -m unittest discover -s tests -v
 ```
 
-CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display, verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated hard-disk configuration, attached floppy A/B images, every CPU model, and all three PCI chipsets exposed by the app. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
+CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display (including the BIOS boot-order editor), verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated primary disk, optional secondary IDE disk and CD-ROM position, attached floppy A/B images, explicit BIOS boot sequences, every CPU model, and all three PCI chipsets exposed by the app. Updater tests also exercise archive path, link, entry-count, and expanded-size defenses. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
 
 ## License
 

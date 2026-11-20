@@ -9,8 +9,9 @@ from unittest.mock import patch
 from pathlib import Path
 
 from chromeos_vm.manager import (
-    CHIPSET_LABELS, CPU_MODEL_LABELS, VMConfig, VMError, VMManager, bochs_quote, disk_geometry,
-    validate_name, validate_resources, validate_bochsrc_text,
+    CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS, VMConfig, VMError,
+    VMManager, bochs_quote, disk_geometry, validate_name, validate_resources,
+    validate_bochsrc_text,
 )
 
 
@@ -686,6 +687,291 @@ class ManagerTests(unittest.TestCase):
         self.manager.stop("launch-test")
         self.assertFalse(self.manager.is_running("launch-test"))
 
+
+
+
+class IDEStorageTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.manager = VMManager(self.root / "vms")
+
+    def _render(self, cfg):
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            return self.manager.render_bochsrc(cfg)
+
+    def test_create_second_sparse_disk_and_place_cdrom_on_secondary_channel(self):
+        iso = self.root / "install.iso"
+        iso.write_bytes(b"test ISO")
+        cfg = self.manager.create(
+            "dual-ide", disk_gib=1, secondary_disk_gib=2, iso=iso,
+            cdrom_slot="ata1-slave",
+        )
+        second = Path(cfg.secondary_disk_path)
+        self.assertEqual(cfg.secondary_disk_gib, 2)
+        self.assertEqual(second, self.manager.vm_path(cfg.name) / "disk2.raw")
+        self.assertEqual(second.stat().st_size, disk_geometry(2)[3])
+        self.assertEqual(self.manager.validate_secondary_disk_image(cfg.name), second.resolve())
+        generated = self._render(cfg)
+        self.assertIn("ata0: enabled=1, ioaddr1=0x1f0, ioaddr2=0x3f0, irq=14", generated)
+        self.assertIn("ata1: enabled=1, ioaddr1=0x170, ioaddr2=0x370, irq=15", generated)
+        self.assertIn(f'ata1-master: type=disk, mode=flat, path="{second.resolve()}"', generated)
+        self.assertIn(f'ata1-slave: type=cdrom, path="{iso.resolve()}", status=inserted', generated)
+        self.assertNotIn("ata0-slave: type=cdrom", generated)
+        validate_bochsrc_text(generated)
+        self.manager.validate_bochsrc_for_vm(cfg.name, generated)
+
+    def test_attach_detach_and_reattach_preserves_secondary_disk_data(self):
+        cfg = self.manager.create("attach-ide")
+        attached = self.manager.attach_secondary_disk(cfg.name, 1)
+        disk = Path(attached.secondary_disk_path)
+        self.assertTrue(disk.is_file())
+        with disk.open("r+b") as stream:
+            stream.write(b"preserved test data")
+        detached_path = self.manager.detach_secondary_disk(cfg.name)
+        self.assertEqual(detached_path, disk.resolve())
+        self.assertIsNone(self.manager.load(cfg.name).secondary_disk_path)
+        with disk.open("rb") as stream:
+            self.assertEqual(stream.read(19), b"preserved test data")
+        with self.assertRaisesRegex(VMError, "different size"):
+            self.manager.attach_secondary_disk(cfg.name, 2)
+        reattached = self.manager.attach_secondary_disk(cfg.name, 1)
+        self.assertEqual(reattached.secondary_disk_path, str(disk.resolve()))
+        with disk.open("rb") as stream:
+            self.assertEqual(stream.read(19), b"preserved test data")
+
+    def test_secondary_disk_size_is_bounded(self):
+        with self.assertRaisesRegex(VMError, "between 1 and 512"):
+            self.manager.create("oversized-secondary", secondary_disk_gib=513)
+        cfg = self.manager.create("oversized-attach")
+        with self.assertRaisesRegex(VMError, "between 1 and 512"):
+            self.manager.attach_secondary_disk(cfg.name, 513)
+
+    def test_secondary_disk_validation_rejects_truncated_and_linked_files(self):
+        cfg = self.manager.create("bad-secondary", secondary_disk_gib=1)
+        disk = Path(cfg.secondary_disk_path)
+        disk.write_bytes(b"truncated")
+        with self.assertRaisesRegex(VMError, "profile requires"):
+            self.manager.validate_secondary_disk_image(cfg.name)
+        disk.unlink()
+        disk.touch()
+        outside = self.root / "linked-secondary.raw"
+        os.link(disk, outside)
+        with self.assertRaisesRegex(VMError, "additional hard links"):
+            self.manager.validate_secondary_disk_image(cfg.name)
+
+    def test_custom_config_cannot_redirect_or_invent_secondary_disk(self):
+        cfg = self.manager.create("secondary-custom", secondary_disk_gib=1)
+        generated = self._render(cfg)
+        outside = self.root / "outside.raw"
+        outside.write_bytes(b"not the guest disk")
+        redirected = generated.replace(
+            f'path="{cfg.secondary_disk_path}"', f'path="{outside.resolve()}"'
+        )
+        with self.assertRaisesRegex(VMError, "private disk2.raw"):
+            self.manager.save_custom_bochsrc(cfg.name, redirected)
+
+        no_disk = self.manager.create("no-secondary-custom")
+        no_disk_config = self._render(no_disk)
+        invented = no_disk_config.replace(
+            "boot: disk",
+            f'ata1-master: type=disk, mode=flat, path="{outside.resolve()}", '
+            "cylinders=100, heads=16, spt=63\nboot: disk",
+        )
+        with self.assertRaisesRegex(VMError, "unmanaged secondary IDE disk"):
+            self.manager.save_custom_bochsrc(no_disk.name, invented)
+
+    def test_cdrom_slot_can_change_and_custom_path_is_pinned(self):
+        iso = self.root / "media.iso"
+        iso.write_bytes(b"media")
+        cfg = self.manager.create("cdrom-position", iso=iso, cdrom_slot="ata1-slave")
+        generated = self._render(cfg)
+        self.assertIn("ata1-slave: type=cdrom", generated)
+        self.manager.validate_bochsrc_for_vm(cfg.name, generated)
+        changed = self.manager.update_profile(
+            cfg.name, cfg.memory_mib, cfg.cpu_ips, iso, cfg.cpu_model,
+            cfg.chipset, "ata0-slave",
+        )
+        self.assertEqual(changed.cdrom_slot, "ata0-slave")
+        generated = self._render(changed)
+        self.assertIn("ata0-slave: type=cdrom", generated)
+        self.assertNotIn("ata1-slave: type=cdrom", generated)
+        outside = self.root / "other.iso"
+        outside.write_bytes(b"other")
+        redirected = generated.replace(f'path="{iso.resolve()}"', f'path="{outside.resolve()}"')
+        with self.assertRaisesRegex(VMError, "CD-ROM image must remain"):
+            self.manager.save_custom_bochsrc(cfg.name, redirected)
+
+    def test_custom_config_cannot_move_cdrom_to_an_unselected_ide_position(self):
+        iso = self.root / "installer.iso"
+        iso.write_bytes(b"installer")
+        cfg = self.manager.create("cdrom-guard", iso=iso, cdrom_slot="ata0-slave")
+        generated = self._render(cfg)
+        moved = generated.replace("ata0-slave: type=cdrom", "ata1-slave: type=cdrom")
+        with self.assertRaisesRegex(VMError, "selected ata0-slave"):
+            self.manager.save_custom_bochsrc(cfg.name, moved)
+
+    def test_legacy_profiles_default_to_primary_channel_cdrom_and_no_second_disk(self):
+        cfg = self.manager.create("legacy-ide")
+        profile = self.manager.config_path(cfg.name)
+        raw = json.loads(profile.read_text(encoding="utf-8"))
+        raw.pop("secondary_disk_gib")
+        raw.pop("secondary_disk_path")
+        raw.pop("cdrom_slot")
+        profile.write_text(json.dumps(raw), encoding="utf-8")
+        loaded = self.manager.load(cfg.name)
+        self.assertIsNone(loaded.secondary_disk_gib)
+        self.assertIsNone(loaded.secondary_disk_path)
+        self.assertEqual(loaded.cdrom_slot, "ata0-slave")
+
+    def test_custom_config_rejects_unmanaged_ata_channels(self):
+        cfg = self.manager.create("ata-channel-guard")
+        generated = self._render(cfg)
+        with self.assertRaisesRegex(VMError, "ata2-master.*not supported"):
+            validate_bochsrc_text(
+                generated + "ata2-master: type=disk, mode=flat, path=\"/tmp/extra.raw\", "
+                "cylinders=10, heads=16, spt=63\\n"
+            )
+
+    def test_ide_slot_allowlist_rejects_unknown_values(self):
+        self.assertEqual(set(IDE_CDROM_SLOT_LABELS), {"ata0-slave", "ata1-slave"})
+        with self.assertRaisesRegex(VMError, "CD-ROM position"):
+            self.manager.create("bad-cdrom-slot", cdrom_slot="ata2-master")
+
+    def test_custom_config_cannot_change_managed_ide_disk_geometry(self):
+        cfg = self.manager.create("geometry-guard", secondary_disk_gib=1)
+        generated = self._render(cfg)
+        primary_cylinders = disk_geometry(cfg.disk_gib)[0]
+        secondary_cylinders = disk_geometry(cfg.secondary_disk_gib)[0]
+        tampered_primary = generated.replace(
+            f"cylinders={primary_cylinders}", "cylinders=1", 1
+        )
+        with self.assertRaisesRegex(VMError, "ata0-master geometry"):
+            self.manager.save_custom_bochsrc(cfg.name, tampered_primary)
+        tampered_secondary = generated.replace(
+            f"cylinders={secondary_cylinders}", "cylinders=1", 1
+        )
+        with self.assertRaisesRegex(VMError, "ata1-master geometry"):
+            self.manager.save_custom_bochsrc(cfg.name, tampered_secondary)
+
+    def test_secondary_disk_changes_are_blocked_for_running_or_custom_config_vms(self):
+        cfg = self.manager.create("ide-running")
+        fake = self.root / "fake-bochs"
+        fake.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(30)\n")
+        fake.chmod(0o755)
+        # Use the manager's real launcher identity checks with a long-lived mock.
+        with patch.object(self.manager, "find_bochs", return_value=str(fake)):
+            with patch.object(self.manager, "_find_bios",
+                              side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                           Path("/mock/vgabios/vgabios.bin")]):
+                self.manager.start(cfg.name)
+        with self.assertRaisesRegex(VMError, "Stop the VM"):
+            self.manager.attach_secondary_disk(cfg.name, 1)
+        self.manager.stop(cfg.name)
+        generated = self._render(self.manager.load(cfg.name))
+        self.manager.save_custom_bochsrc(cfg.name, generated + "# custom\n")
+        with self.assertRaisesRegex(VMError, "Restore the generated Bochs config"):
+            self.manager.attach_secondary_disk(cfg.name, 1)
+
+    def test_explicit_boot_order_round_trips_and_renders_bochs_sequence(self):
+        iso = self.root / "boot-order.iso"
+        iso.write_bytes(b"test ISO")
+        floppy = self.root / "boot-order.img"
+        floppy.write_bytes(bytes(1_440 * 1024))
+        cfg = self.manager.create("explicit-boot-order", iso=iso)
+        cfg = self.manager.set_floppy_a(cfg.name, floppy)
+        cfg = self.manager.set_boot_order(cfg.name, ("cdrom", "floppy", "disk"))
+
+        loaded = self.manager.load(cfg.name)
+        self.assertEqual(loaded.boot_order, ("cdrom", "floppy", "disk"))
+        raw = json.loads(self.manager.config_path(cfg.name).read_text(encoding="utf-8"))
+        self.assertEqual(raw["boot_order"], ["cdrom", "floppy", "disk"])
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(loaded)
+        self.assertIn("boot: cdrom, floppy, disk", generated)
+        validate_bochsrc_text(generated)
+        self.manager.validate_bochsrc_for_vm(cfg.name, generated)
+
+    def test_boot_order_accepts_network_and_rejects_invalid_or_unavailable_devices(self):
+        cfg = self.manager.create("boot-order-validation")
+        with self.assertRaisesRegex(VMError, "Floppy boot requires"):
+            self.manager.set_boot_order(cfg.name, ("floppy", "disk"))
+        with self.assertRaisesRegex(VMError, "CD/DVD boot requires"):
+            self.manager.set_boot_order(cfg.name, ("cdrom", "disk"))
+        with self.assertRaisesRegex(VMError, "only once"):
+            self.manager.set_boot_order(cfg.name, ("disk", "disk"))
+        with self.assertRaisesRegex(VMError, "one and three"):
+            self.manager.set_boot_order(cfg.name, ("network", "disk", "floppy", "cdrom"))
+        with self.assertRaisesRegex(VMError, "floppy, cdrom, disk, or network"):
+            self.manager.set_boot_order(cfg.name, ("usb", "disk"))
+        cfg = self.manager.set_boot_order(cfg.name, ("network", "disk"))
+        self.assertEqual(cfg.boot_order, ("network", "disk"))
+
+    def test_explicit_boot_devices_cannot_be_ejected_until_removed_from_order(self):
+        iso = self.root / "boot-media.iso"
+        iso.write_bytes(b"test ISO")
+        floppy = self.root / "boot-media.img"
+        floppy.write_bytes(bytes(1_440 * 1024))
+        cfg = self.manager.create("boot-media-protection", iso=iso)
+        cfg = self.manager.set_floppy_a(cfg.name, floppy)
+        self.manager.set_boot_order(cfg.name, ("floppy", "cdrom", "disk"))
+
+        with self.assertRaisesRegex(VMError, "CD/DVD boot requires"):
+            self.manager.set_iso(cfg.name, None)
+        with self.assertRaisesRegex(VMError, "Floppy boot requires"):
+            self.manager.set_floppy_a(cfg.name, None)
+
+        self.manager.set_boot_order(cfg.name, ("disk",))
+        self.manager.set_iso(cfg.name, None)
+        self.manager.set_floppy_a(cfg.name, None)
+        self.assertIsNone(self.manager.load(cfg.name).iso_path)
+        self.assertIsNone(self.manager.load(cfg.name).floppy_a_path)
+
+    def test_custom_bochsrc_cannot_change_profile_boot_priority(self):
+        iso = self.root / "custom-boot-order.iso"
+        iso.write_bytes(b"test ISO")
+        cfg = self.manager.create("custom-boot-order", iso=iso)
+        cfg = self.manager.set_boot_order(cfg.name, ("cdrom", "disk"))
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(cfg)
+        self.assertIn("boot: cdrom, disk", generated)
+        changed = generated.replace("boot: cdrom, disk", "boot: disk")
+        with self.assertRaisesRegex(VMError, "boot directive must match"):
+            self.manager.save_custom_bochsrc(cfg.name, changed)
+
+    def test_legacy_profile_without_boot_order_keeps_automatic_priority(self):
+        cfg = self.manager.create("legacy-boot-order")
+        profile = self.manager.config_path(cfg.name)
+        raw = json.loads(profile.read_text(encoding="utf-8"))
+        raw.pop("boot_order")
+        profile.write_text(json.dumps(raw), encoding="utf-8")
+        loaded = self.manager.load(cfg.name)
+        self.assertIsNone(loaded.boot_order)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(loaded)
+        self.assertIn("boot: disk", generated)
+
+    def test_static_bochsrc_boot_validator_rejects_duplicate_and_fourth_device(self):
+        cfg = self.manager.create("invalid-boot-directive")
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/vgabios/vgabios.bin")]):
+            generated = self.manager.render_bochsrc(cfg)
+        with self.assertRaisesRegex(VMError, "only once"):
+            validate_bochsrc_text(generated.replace("boot: disk", "boot: disk, disk"))
+        with self.assertRaisesRegex(VMError, "one and three"):
+            validate_bochsrc_text(
+                generated.replace("boot: disk", "boot: network, cdrom, floppy, disk")
+            )
 
 
 if __name__ == "__main__":
