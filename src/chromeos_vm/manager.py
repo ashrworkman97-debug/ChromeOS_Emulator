@@ -1244,7 +1244,7 @@ class VMManager:
         raise VMError("Bochs did not exit after SIGTERM. Close its emulator window; the process was not force-killed.")
 
     def diagnostic_report(self, name: str) -> str:
-        """Return read-only VM, emulator, media, disk, and config diagnostics."""
+        """Build a non-destructive VM, emulator, media, disk, and config report."""
         cfg = self.load(name)
         pid = self._running_pid(name)
         bochs = self.find_bochs()

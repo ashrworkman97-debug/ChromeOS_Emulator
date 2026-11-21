@@ -64,7 +64,7 @@ The app's editor performs static checks for required directives, quoting, memory
 
 ## Diagnostics and shutdown behavior
 
-The native **Diagnostics…** action and `chromeos-vm diagnose <name>` command provide read-only checks for the Bochs executable, system/VGA BIOS packages, active Bochs config (static validation only), VM process state, private disk path/type/link-count/geometry, sparse disk allocation, attached ISO/floppy availability, and log presence. A clean report is not proof that an operating system installer or installed guest will boot.
+The native **Diagnostics…** action and `chromeos-vm diagnose <name>` command provide non-destructive checks for the Bochs executable, system/VGA BIOS packages, active Bochs config (static validation only), VM process state, private disk path/type/link-count/geometry, sparse disk allocation, attached ISO/floppy availability, and log presence. A clean report is not proof that an operating system installer or installed guest will boot. The report does not alter VM profiles or disks, though process inspection may reconcile a stale runtime PID marker.
 
 The manager's Stop action sends SIGTERM to the Bochs process. It does not send an ACPI or other shutdown command into the guest. Shut down from the guest OS first whenever possible; stopping while the guest is writing can lose data or damage its filesystem.
 

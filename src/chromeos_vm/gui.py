@@ -103,6 +103,8 @@ class ChromeOSVMStudio:
         ttk.Label(section, text="VIRTUAL MACHINES",
                   background="#eef2f7", foreground="#334155",
                   font=("TkDefaultFont", 10, "bold")).pack(side="left")
+        ttk.Button(section, text="Diagnostics…", style="Action.TButton",
+                   command=self.show_diagnostics).pack(side="right", padx=(8, 0))
         ttk.Label(section, text="Select a machine to manage its power and media",
                   style="App.TLabel").pack(side="right")
 
@@ -180,8 +182,6 @@ class ChromeOSVMStudio:
                    command=self.open_folder).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="View logs", style="Action.TButton",
                    command=self.show_logs).pack(fill="x", pady=3)
-        ttk.Button(action_panel, text="Diagnostics…", style="Action.TButton",
-                   command=self.show_diagnostics).pack(fill="x", pady=3)
 
         ttk.Separator(action_panel).pack(fill="x", pady=10)
         ttk.Button(action_panel, text="Refresh library", style="Action.TButton",
@@ -888,7 +888,7 @@ class ChromeOSVMStudio:
         frame.pack(fill="both", expand=True)
         ttk.Label(
             frame,
-            text="Read-only checks for the emulator, firmware, disks, media, and configuration.",
+            text="Non-destructive checks for the emulator, firmware, disks, media, and configuration.",
             wraplength=740,
         ).pack(anchor="w", pady=(0, 8))
         body = ttk.Frame(frame)
