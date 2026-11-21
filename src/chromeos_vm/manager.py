@@ -1339,7 +1339,7 @@ class VMManager:
         ])
         return "\n".join(lines)
 
-    def delete(self, name: str) -> None
+    def delete(self, name: str) -> None:
         self.load(name)
         if self.is_running(name):
             raise VMError("Stop the VM before deleting it.")

@@ -904,7 +904,7 @@ class ChromeOSVMStudio:
             anchor="e", pady=(8, 0)
         )
 
-    def delete_vm(self) -> None
+    def delete_vm(self) -> None:
         name = self.selected_name()
         if not name:
             self._status("Select a virtual machine first.")
