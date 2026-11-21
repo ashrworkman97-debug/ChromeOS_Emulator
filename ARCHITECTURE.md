@@ -59,6 +59,8 @@ crosvm is a VMM using Linux KVM and virtio devices, not a general PC chipset emu
 - A custom `ata0-master` directive must still point to the VM's managed `disk.raw`; custom device settings cannot redirect the primary guest disk outside private storage.
 - When floppy A or B images are stored in the VM profile, custom `floppya` and `floppyb` directives must continue to reference those exact attached images and retain `write_protected=1`; the static validator rejects attempts to make managed media writable.
 - Never delete a VM disk while its emulator is running.
+- The Stop action sends SIGTERM to the Bochs process; it does not issue a guest ACPI/power-off request. The UI and diagnostics tell users to shut down inside the guest OS first to reduce filesystem-corruption risk.
+- Read-only diagnostics check process identity, installed Bochs/BIOS paths, active-config static validation, managed disk integrity/allocation, attached-media availability, and log presence. They are health hints, not guest-boot verification.
 - Ask for explicit confirmation before permanent disk deletion.
 - Do not bundle proprietary guest installation media or ROM/BIOS dumps.
 - A configured VM is not proof that an OS boots. Only observed end-to-end guest installation/boot testing can establish compatibility.

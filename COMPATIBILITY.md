@@ -15,6 +15,7 @@
 | BIOS boot order | Automatic media-aware default or one to three unique devices: floppy, cdrom, disk, network; explicit floppy/CD-ROM entries require attached media |
 | Secondary disk | Private sparse raw disk2.raw; attach/detach preserves data; exact path, size, file type, and link count checked before boot |
 | Guest display | Bochs's own GUI window |
+| Diagnostics | Native GUI and CLI health report; checks host dependencies, process state, config, disks, media, and logs (not guest boot compatibility) |
 | Floppy A/B | Optional raw floppy images at standard Bochs capacities; both write-protected by default; BIOS floppy boot targets A |
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
 | Managed disk safety | Pre-boot private-path, regular-file, link-count, and exact-size checks |
@@ -60,6 +61,12 @@ CI checks that generated configurations with both floppy drives and each exposed
 ## Configuration validation
 
 The app's editor performs static checks for required directives, quoting, memory/IPS ranges, and the raw IDE disk declaration. It also requires the primary IDE disk path to remain the VM's private `disk.raw`; it cannot be redirected through a custom config. Before launch, the manager verifies the VM directory is within the configured storage root and that the disk is a regular non-symlink file with one hard link and the exact geometry-derived byte size. This is intentionally not represented as a complete Bochs parser: optional directives and device availability vary by Bochs build. Debian 13 CI additionally runs Bochs itself in headless benchmark mode against the generated configuration and an empty test disk. This checks parser/device initialization but does not boot an installed guest OS.
+
+## Diagnostics and shutdown behavior
+
+The native **Diagnostics…** action and `chromeos-vm diagnose <name>` command provide read-only checks for the Bochs executable, system/VGA BIOS packages, active Bochs config (static validation only), VM process state, private disk path/type/link-count/geometry, sparse disk allocation, attached ISO/floppy availability, and log presence. A clean report is not proof that an operating system installer or installed guest will boot.
+
+The manager's Stop action sends SIGTERM to the Bochs process. It does not send an ACPI or other shutdown command into the guest. Shut down from the guest OS first whenever possible; stopping while the guest is writing can lose data or damage its filesystem.
 
 ## Required user inputs
 

@@ -332,6 +332,7 @@ jobs:
               assert "Attach second disk…" in button_labels
               assert "Detach second disk" in button_labels
               assert "Boot order…" in button_labels
+              assert "Diagnostics…" in button_labels
 
               # Exercise the actual create dialog and confirm chipset choices
               # are presented by native Tk widgets, not just manager APIs.
@@ -349,6 +350,19 @@ jobs:
               assert app.table.set("dos-test", "state") == "Stopped"
               assert app.table.tag_has("stopped", "dos-test")
               app.table.selection_set("dos-test")
+
+              app.show_diagnostics()
+              root.update()
+              diagnostics_dialog = next(
+                  w for w in root.winfo_children()
+                  if isinstance(w, tk.Toplevel) and "Diagnostics" in w.title()
+              )
+              diagnostic_text = [
+                  w for w in descendants(diagnostics_dialog) if isinstance(w, tk.Text)
+              ]
+              assert diagnostic_text
+              assert "Primary disk: OK" in diagnostic_text[0].get("1.0", "end")
+              diagnostics_dialog.destroy()
 
               # Exercise the edit dialog too, so profile changes remain reachable.
               app.edit_vm()

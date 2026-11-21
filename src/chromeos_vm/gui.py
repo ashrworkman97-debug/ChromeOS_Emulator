@@ -180,6 +180,8 @@ class ChromeOSVMStudio:
                    command=self.open_folder).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="View logs", style="Action.TButton",
                    command=self.show_logs).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Diagnostics…", style="Action.TButton",
+                   command=self.show_diagnostics).pack(fill="x", pady=3)
 
         ttk.Separator(action_panel).pack(fill="x", pady=10)
         ttk.Button(action_panel, text="Refresh library", style="Action.TButton",
@@ -868,7 +870,41 @@ class ChromeOSVMStudio:
         text.insert("1.0", content)
         text.configure(state="disabled")
 
-    def delete_vm(self) -> None:
+    def show_diagnostics(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        try:
+            report = self.manager.diagnostic_report(name)
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not inspect VM", str(exc), parent=self.root)
+            return
+
+        window = tk.Toplevel(self.root)
+        window.title(f"{name} — Diagnostics")
+        window.geometry("780x560")
+        frame = ttk.Frame(window, padding=14)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Read-only checks for the emulator, firmware, disks, media, and configuration.",
+            wraplength=740,
+        ).pack(anchor="w", pady=(0, 8))
+        body = ttk.Frame(frame)
+        body.pack(fill="both", expand=True)
+        report_text = tk.Text(body, wrap="word", height=24)
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=report_text.yview)
+        report_text.configure(yscrollcommand=scrollbar.set)
+        report_text.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        report_text.insert("1.0", report)
+        report_text.configure(state="disabled")
+        ttk.Button(frame, text="Close", command=window.destroy).pack(
+            anchor="e", pady=(8, 0)
+        )
+
+    def delete_vm(self) -> None
         name = self.selected_name()
         if not name:
             self._status("Select a virtual machine first.")

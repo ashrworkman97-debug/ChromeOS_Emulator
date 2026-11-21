@@ -93,5 +93,17 @@ class IDEStorageCLITests(unittest.TestCase):
         self.assertFalse((self.home / "cli-invalid-boot").exists())
 
 
+    def test_diagnose_reports_vm_health_and_shutdown_guidance(self):
+        self.run_cli("create", "cli-diagnostics", "--disk-gib", "1")
+        from unittest.mock import patch
+        with patch.object(VMManager, "find_bochs", return_value=None), \
+             patch.object(VMManager, "_find_bios", return_value=None):
+            result, report = self.run_cli("diagnose", "cli-diagnostics")
+        self.assertEqual(result, 0)
+        self.assertIn("State: Stopped", report)
+        self.assertIn("Primary disk: OK", report)
+        self.assertIn("Bochs: not installed", report)
+        self.assertIn("Guest shutdown guidance:", report)
+
 if __name__ == "__main__":
     unittest.main()

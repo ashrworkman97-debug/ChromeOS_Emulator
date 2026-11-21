@@ -55,6 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("start", "stop", "info"):
         sub = cmds.add_parser(command)
         sub.add_argument("name")
+    diagnose = cmds.add_parser("diagnose", help="run read-only VM health checks")
+    diagnose.add_argument("name")
     cmds.add_parser("list", help="list virtual machines")
     delete = cmds.add_parser("delete", help="delete a stopped VM and its disk")
     delete.add_argument("name")
@@ -111,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
                 if cfg.secondary_disk_gib is not None:
                     disk_summary += f" + {cfg.secondary_disk_gib} GiB secondary disk"
                 print(f"{cfg.name}: {status}, {cfg.memory_mib} MiB RAM, {disk_summary}")
+        elif args.command == "diagnose":
+            print(manager.diagnostic_report(args.name))
         elif args.command == "info":
             cfg = manager.load(args.name)
             print(

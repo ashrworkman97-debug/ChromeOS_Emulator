@@ -55,6 +55,38 @@ class ManagerTests(unittest.TestCase):
         self.root = Path(temp.name)
         self.manager = VMManager(self.root / "vms")
 
+    def test_diagnostic_report_checks_disk_media_and_shutdown_guidance(self):
+        iso = self.root / "diagnostics.iso"
+        iso.write_bytes(b"test ISO")
+        cfg = self.manager.create("diagnostics", disk_gib=1, iso=iso)
+        disk = Path(cfg.disk_path)
+        before = disk.stat().st_size
+
+        with patch.object(self.manager, "find_bochs", return_value=None), \
+             patch.object(self.manager, "_find_bios", return_value=None):
+            report = self.manager.diagnostic_report(cfg.name)
+
+        self.assertIn("State: Stopped", report)
+        self.assertIn("Bochs: not installed", report)
+        self.assertIn("System BIOS: missing", report)
+        self.assertIn("VGA BIOS: missing", report)
+        self.assertIn("Primary disk: OK", report)
+        self.assertIn("allocated /", report)
+        self.assertIn("CD/DVD ISO: OK", report)
+        self.assertIn("Bochs config validation: not generated yet", report)
+        self.assertIn("Guest shutdown guidance:", report)
+        self.assertIn("not an in-guest ACPI/power-off request", report)
+        self.assertEqual(disk.stat().st_size, before)
+        self.assertTrue(iso.is_file())
+
+        disk.write_bytes(b"truncated disk")
+        iso.unlink()
+        with patch.object(self.manager, "find_bochs", return_value=None), \
+             patch.object(self.manager, "_find_bios", return_value=None):
+            damaged = self.manager.diagnostic_report(cfg.name)
+        self.assertIn("Primary disk: PROBLEM", damaged)
+        self.assertIn("CD/DVD ISO: PROBLEM", damaged)
+
     def _spawn_marked_process(self, name):
         config_file = (self.manager.vm_path(name) / "bochsrc").resolve()
         process = subprocess.Popen([

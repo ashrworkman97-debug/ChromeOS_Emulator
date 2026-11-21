@@ -1243,7 +1243,103 @@ class VMManager:
             time.sleep(0.1)
         raise VMError("Bochs did not exit after SIGTERM. Close its emulator window; the process was not force-killed.")
 
-    def delete(self, name: str) -> None:
+    def diagnostic_report(self, name: str) -> str:
+        """Return read-only VM, emulator, media, disk, and config diagnostics."""
+        cfg = self.load(name)
+        pid = self._running_pid(name)
+        bochs = self.find_bochs()
+        system_bios = self._find_bios("BIOS-bochs-latest")
+        vga_bios = self._find_bios("VGABIOS-lgpl-latest")
+        custom_config = self.custom_bochsrc_path(name)
+        active_config = self.active_bochsrc_path(name)
+        config_kind = "custom" if custom_config.is_file() else "generated"
+
+        lines = [
+            f"VM: {cfg.name}",
+            f"State: Running (PID {pid})" if pid is not None else "State: Stopped",
+            f"Backend: {cfg.backend} (x86 software emulation)",
+            f"Bochs: {bochs or 'not installed (apt install bochs bochs-sdl)'}",
+            f"System BIOS: {system_bios or 'missing (apt install bochsbios)'}",
+            f"VGA BIOS: {vga_bios or 'missing (apt install vgabios)'}",
+            f"Active config ({config_kind}): {active_config}",
+        ]
+
+        if active_config.is_file():
+            try:
+                self.validate_bochsrc_for_vm(
+                    name, active_config.read_text(encoding="utf-8")
+                )
+                lines.append("Bochs config validation: OK (static checks only)")
+            except (VMError, OSError) as exc:
+                lines.append(f"Bochs config validation: PROBLEM — {exc}")
+        else:
+            lines.append("Bochs config validation: not generated yet; created at first boot")
+
+        def disk_line(label: str, configured_path: str | None, validator) -> None:
+            if configured_path is None:
+                lines.append(f"{label}: not attached")
+                return
+            try:
+                disk = validator()
+                if disk is None:
+                    lines.append(f"{label}: not attached")
+                    return
+                info = disk.stat()
+                allocated = getattr(info, "st_blocks", None)
+                if isinstance(allocated, int):
+                    allocated_bytes = allocated * 512
+                    storage = f"{allocated_bytes:,} allocated / {info.st_size:,} logical bytes"
+                    if allocated_bytes < info.st_size:
+                        storage += " (sparse)"
+                else:
+                    storage = f"{info.st_size:,} logical bytes"
+                lines.append(f"{label}: OK — {storage}")
+            except (VMError, OSError) as exc:
+                lines.append(f"{label}: PROBLEM — {exc}")
+
+        def media_line(label: str, configured_path: str | None, validator) -> None:
+            if configured_path is None:
+                lines.append(f"{label}: not attached")
+                return
+            try:
+                media = Path(validator())
+                if not media.is_file() or not os.access(media, os.R_OK):
+                    raise VMError(f"missing or unreadable file: {media}")
+                lines.append(f"{label}: OK — {media}")
+            except (VMError, OSError, TypeError) as exc:
+                lines.append(f"{label}: PROBLEM — {exc}")
+
+        disk_line("Primary disk", cfg.disk_path,
+                  lambda: self.validate_disk_image(name, cfg))
+        disk_line("Secondary disk", cfg.secondary_disk_path,
+                  lambda: self.validate_secondary_disk_image(name, cfg))
+        media_line("CD/DVD ISO", cfg.iso_path,
+                   lambda: self._validate_iso(cfg.iso_path) if cfg.iso_path else None)
+        media_line("Floppy A", cfg.floppy_a_path,
+                   lambda: self.validate_floppy_image(name, cfg))
+        media_line("Floppy B", cfg.floppy_b_path,
+                   lambda: self.validate_floppy_b_image(name, cfg))
+
+        for log_name in ("bochs.log", "launcher.log"):
+            log_path = self.vm_path(name) / "logs" / log_name
+            if log_path.is_file():
+                try:
+                    lines.append(f"{log_name}: present ({log_path.stat().st_size:,} bytes)")
+                except OSError as exc:
+                    lines.append(f"{log_name}: unavailable ({exc})")
+            else:
+                lines.append(f"{log_name}: not created yet")
+
+        lines.extend([
+            "",
+            "Guest shutdown guidance:",
+            "Use the guest operating system's own Shut Down command first.",
+            "The manager's Stop action sends SIGTERM to the Bochs process; it is not an in-guest ACPI/power-off request.",
+            "Stopping while the guest is writing to its disk can lose unsaved work or damage the guest filesystem.",
+        ])
+        return "\n".join(lines)
+
+    def delete(self, name: str) -> None
         self.load(name)
         if self.is_running(name):
             raise VMError("Stop the VM before deleting it.")
