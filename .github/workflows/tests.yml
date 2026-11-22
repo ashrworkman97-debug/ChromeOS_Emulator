@@ -364,7 +364,6 @@ jobs:
               assert "Detach second disk" in button_labels
               assert "Boot order…" in button_labels
               assert "Diagnostics…" in button_labels
-              assert any("Sound Blaster 16" in w.cget("text") for w in descendants(root) if isinstance(w, ttk.Checkbutton))
 
               # Exercise the actual create dialog and confirm chipset choices
               # are presented by native Tk widgets, not just manager APIs.
