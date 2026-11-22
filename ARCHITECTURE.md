@@ -64,3 +64,7 @@ crosvm is a VMM using Linux KVM and virtio devices, not a general PC chipset emu
 - Ask for explicit confirmation before permanent disk deletion.
 - Do not bundle proprietary guest installation media or ROM/BIOS dumps.
 - A configured VM is not proof that an OS boots. Only observed end-to-end guest installation/boot testing can establish compatibility.
+
+## Optional audio
+
+A VM profile may opt into the Bochs SB16 ISA sound device and PC speaker. The generated config selects SDL for PCM wave output and disables wave input and MIDI output. The feature is off by default because sound plugins vary between distro builds and Crostini audio forwarding depends on the host environment. The app reports this as optional emulated hardware, not guaranteed Chromebook audio support.

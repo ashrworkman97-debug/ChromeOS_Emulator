@@ -200,6 +200,7 @@ def validate_bochsrc_text(text: str) -> None:
         if directive in BOCHSRC_REQUIRED or directive in {
             "floppya", "floppyb", "pci", "ata0", "ata1",
             "ata0-slave", "ata1-master", "ata1-slave",
+            "sound", "speaker", "sb16",
         }:
             if directive in seen:
                 raise VMError(f"Line {number}: duplicate directive '{directive}'.")
@@ -331,6 +332,7 @@ class VMConfig:
     cpu_ips: int = 10_000_000
     cpu_model: str = "default"
     chipset: str = "i440fx"
+    sound_enabled: bool = False
     backend: str = "bochs"
     disk_format: str = "raw"
     config_version: int = CONFIG_VERSION
@@ -350,6 +352,8 @@ class VMConfig:
         validate_resources(config.memory_mib, config.disk_gib, config.cpu_ips)
         validate_cpu_model(config.cpu_model)
         validate_chipset(config.chipset)
+        if type(config.sound_enabled) is not bool:
+            raise VMError("The sound setting must be true or false.")
         validate_cdrom_slot(config.cdrom_slot)
         validate_boot_order_for_media(
             config.boot_order,
@@ -421,11 +425,14 @@ class VMManager:
                cpu_model: str = "default", chipset: str = "i440fx",
                secondary_disk_gib: int | None = None,
                cdrom_slot: str = "ata0-slave",
-               boot_order: tuple[str, ...] | None = None) -> VMConfig:
+               boot_order: tuple[str, ...] | None = None,
+               sound_enabled: bool = False) -> VMConfig:
         validate_name(name)
         validate_resources(memory_mib, disk_gib, cpu_ips)
         validate_cpu_model(cpu_model)
         validate_chipset(chipset)
+        if type(sound_enabled) is not bool:
+            raise VMError("The sound setting must be true or false.")
         validate_cdrom_slot(cdrom_slot)
         validate_boot_order(boot_order)
         if secondary_disk_gib is not None:
@@ -458,6 +465,7 @@ class VMManager:
                 cdrom_slot=cdrom_slot,
                 boot_order=tuple(boot_order) if boot_order is not None else None,
                 cpu_ips=cpu_ips, cpu_model=cpu_model, chipset=chipset,
+                sound_enabled=sound_enabled,
             )
             self._save(config)
             (directory / "logs").mkdir()
@@ -762,6 +770,20 @@ class VMManager:
                 "The custom boot directive must match the BIOS boot order saved in this VM profile. "
                 "Use the Boot order editor to change it."
             )
+        if cfg.sound_enabled:
+            sound_value = configured_value("sound") or ""
+            speaker_value = configured_value("speaker") or ""
+            sb16_value = configured_value("sb16") or ""
+            if not (
+                re.search(r"\bwaveoutdrv\s*=\s*sdl\b", sound_value, re.IGNORECASE)
+                and re.search(r"\benabled\s*=\s*1\b", speaker_value)
+                and re.search(r"\bmode\s*=\s*sound\b", speaker_value)
+                and re.search(r"\benabled\s*=\s*1\b", sb16_value)
+                and re.search(r"\bwavemode\s*=\s*1\b", sb16_value)
+            ):
+                raise VMError(
+                    "The custom config must preserve the SB16/PC-speaker audio enabled in this VM profile."
+                )
 
     def validate_floppy_image(self, name: str, config: VMConfig | None = None) -> Path | None:
         cfg = config or self.load(name)
@@ -858,7 +880,8 @@ class VMManager:
     def update_profile(self, name: str, memory_mib: int, cpu_ips: int,
                        iso: Path | str | None, cpu_model: str | None = None,
                        chipset: str | None = None,
-                       cdrom_slot: str | None = None) -> VMConfig:
+                       cdrom_slot: str | None = None,
+                       sound_enabled: bool | None = None) -> VMConfig:
         """Update editable profile fields for a stopped VM; never resize its disk."""
         cfg = self.load(name)
         if self.is_running(name):
@@ -870,6 +893,9 @@ class VMManager:
         selected_chipset = cfg.chipset if chipset is None else chipset
         validate_cpu_model(selected_cpu_model)
         validate_chipset(selected_chipset)
+        selected_sound_enabled = cfg.sound_enabled if sound_enabled is None else sound_enabled
+        if type(selected_sound_enabled) is not bool:
+            raise VMError("The sound setting must be true or false.")
         selected_cdrom_slot = cfg.cdrom_slot if cdrom_slot is None else cdrom_slot
         validate_cdrom_slot(selected_cdrom_slot)
         iso_value = self._validate_iso(iso) if iso else None
@@ -882,6 +908,7 @@ class VMManager:
             "cpu_ips": cpu_ips,
             "cpu_model": selected_cpu_model,
             "chipset": selected_chipset,
+            "sound_enabled": selected_sound_enabled,
             "cdrom_slot": selected_cdrom_slot,
             "iso_path": iso_value,
         })
@@ -974,6 +1001,14 @@ class VMManager:
             "vga: extension=vbe",
             "mouse: enabled=1",
         ])
+        if cfg.sound_enabled:
+            # Bochs documents the SB16 ISA device and SDL wave-output driver.
+            # MIDI and microphone input stay disabled.
+            lines.extend([
+                "sound: waveoutdrv=sdl, waveindrv=dummy, midioutdrv=dummy",
+                "speaker: enabled=1, mode=sound, volume=10",
+                "sb16: enabled=1, midimode=0, wavemode=1, dmatimer=600000",
+            ])
         cylinders, heads, sectors, _image_bytes = disk_geometry(cfg.disk_gib)
         lines.append('ata0-master: type=disk, mode=flat, path=' + bochs_quote(cfg.disk_path) +
                      f", cylinders={cylinders}, heads={heads}, spt={sectors}, translation=auto")

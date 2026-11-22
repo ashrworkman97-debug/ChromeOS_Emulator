@@ -53,6 +53,17 @@ class IDEStorageCLITests(unittest.TestCase):
             self.assertEqual(stream.read(14), b"keep this data")
         self.assertIsNone(VMManager(self.home).load("cli-existing").secondary_disk_path)
 
+    def test_create_can_enable_sb16_audio_from_cli(self):
+        result, output = self.run_cli("create", "cli-sound", "--disk-gib", "1", "--sound")
+        self.assertEqual(result, 0)
+        self.assertIn("Audio: SB16/PC speaker enabled", output)
+        manager = VMManager(self.home)
+        self.assertTrue(manager.load("cli-sound").sound_enabled)
+
+        result, info = self.run_cli("info", "cli-sound")
+        self.assertEqual(result, 0)
+        self.assertIn("Sound: SB16/PC speaker enabled", info)
+
     def test_cli_rejects_unknown_cdrom_position(self):
         with self.assertRaises(SystemExit):
             self.run_cli("create", "bad-position", "--cdrom-slot", "ata2-master")

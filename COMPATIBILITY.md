@@ -17,6 +17,7 @@
 | Guest display | Bochs's own GUI window |
 | Diagnostics | Native GUI and CLI health report; checks host dependencies, process state, config, disks, media, and logs (not guest boot compatibility) |
 | Floppy A/B | Optional raw floppy images at standard Bochs capacities; both write-protected by default; BIOS floppy boot targets A |
+| Audio | Optional SB16 ISA + PC speaker with SDL PCM output; disabled by default; MIDI/input disabled; requires sound support in Bochs and working Crostini audio routing |
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
 | Managed disk safety | Pre-boot private-path, regular-file, link-count, and exact-size checks |
 

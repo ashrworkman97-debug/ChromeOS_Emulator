@@ -84,6 +84,37 @@ jobs:
           PY
 
 
+      - name: Parse and initialize optional SB16 and PC speaker audio with real Bochs
+        run: |
+          PYTHONPATH=src python3 - <<'PY'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from chromeos_vm.manager import VMManager
+
+          with tempfile.TemporaryDirectory() as temp:
+              manager = VMManager(Path(temp) / "vms")
+              vm = manager.create("sound-ci", memory_mib=128, disk_gib=1, sound_enabled=True)
+              config = manager.render_bochsrc(vm)
+              assert "sb16: enabled=1" in config
+              config_path = manager.vm_path(vm.name) / "bochsrc.sound-ci"
+              config_path.write_text(config, encoding="utf-8")
+              log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+              result = subprocess.run(
+                  ["xvfb-run", "-a", "env", "SDL_VIDEODRIVER=x11",
+                   "SDL_AUDIODRIVER=dummy", "bochs", "-benchmark", "1", "-q",
+                   "-f", str(config_path)],
+                  capture_output=True, text=True, timeout=45, check=False,
+              )
+              log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+              if "cpu loop quit" not in log_text or ">>PANIC<<" in log_text:
+                  raise SystemExit(
+                      f"Bochs rejected optional SB16 audio (exit {result.returncode}):\n"
+                      + result.stdout[-2500:] + result.stderr[-2500:] + log_text[-6000:]
+                  )
+              print("Bochs initialized SB16 ISA audio and PC speaker with SDL output")
+          PY
+
       - name: Parse and initialize floppy A and B images with real Bochs
         run: |
           PYTHONPATH=src python3 - <<'PY'
@@ -333,6 +364,7 @@ jobs:
               assert "Detach second disk" in button_labels
               assert "Boot order…" in button_labels
               assert "Diagnostics…" in button_labels
+              assert any("Sound Blaster 16" in w.cget("text") for w in descendants(root) if isinstance(w, ttk.Checkbutton))
 
               # Exercise the actual create dialog and confirm chipset choices
               # are presented by native Tk widgets, not just manager APIs.
@@ -342,6 +374,8 @@ jobs:
               create_combos = [w for w in descendants(create_dialog) if isinstance(w, ttk.Combobox)]
               assert any(set(CHIPSET_LABELS.values()).issubset(set(w.cget("values"))) for w in create_combos)
               assert any(set(IDE_CDROM_SLOT_LABELS.values()).issubset(set(w.cget("values"))) for w in create_combos)
+              create_toggles = [w for w in descendants(create_dialog) if isinstance(w, ttk.Checkbutton)]
+              assert any("Sound Blaster 16" in w.cget("text") for w in create_toggles)
               create_dialog.destroy()
 
               manager.create("dos-test", memory_mib=128, disk_gib=1)
@@ -371,6 +405,17 @@ jobs:
               edit_combos = [w for w in descendants(edit_dialog) if isinstance(w, ttk.Combobox)]
               assert any(set(CHIPSET_LABELS.values()).issubset(set(w.cget("values"))) for w in edit_combos)
               assert any(set(IDE_CDROM_SLOT_LABELS.values()).issubset(set(w.cget("values"))) for w in edit_combos)
+              sound_toggle = next(
+                  w for w in descendants(edit_dialog)
+                  if isinstance(w, ttk.Checkbutton) and "Sound Blaster 16" in w.cget("text")
+              )
+              sound_toggle.invoke()
+              next(
+                  w for w in descendants(edit_dialog)
+                  if isinstance(w, ttk.Button) and w.cget("text") == "Save changes"
+              ).invoke()
+              root.update()
+              assert manager.load("dos-test").sound_enabled
               edit_dialog.destroy()
 
               # Exercise the native three-position BIOS boot-order editor.

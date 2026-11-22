@@ -296,6 +296,7 @@ class ChromeOSVMStudio:
         cpu_model = tk.StringVar(value=CPU_MODEL_LABELS["default"])
         chipset = tk.StringVar(value=CHIPSET_LABELS["i440fx"])
         cdrom_slot = tk.StringVar(value=IDE_CDROM_SLOT_LABELS["ata0-slave"])
+        sound_enabled = tk.BooleanVar(value=False)
 
         ttk.Label(frame, text="Name").grid(row=0, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=name, width=34).grid(row=0, column=1, sticky="ew", pady=5)
@@ -324,13 +325,18 @@ class ChromeOSVMStudio:
         ttk.Entry(iso_row, textvariable=iso, width=25).pack(side="left", fill="x", expand=True)
         ttk.Button(iso_row, text="Browse…", command=lambda: iso.set(filedialog.askopenfilename(
             parent=dialog, filetypes=[("Disk images", "*.iso *.img *.ima"), ("All files", "*")]))).pack(side="left", padx=(5, 0))
+        ttk.Checkbutton(
+            frame, text="Enable Sound Blaster 16 / PC speaker audio (SDL output)",
+            variable=sound_enabled,
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(5, 4))
         ttk.Label(
             frame,
             text=("The second hard disk is created as IDE channel 1 master. "
                   "The CD-ROM can use the slave position on IDE channel 0 or 1. "
-                  "CPU and chipset selections change guest-visible hardware, not host speed."),
+                  "CPU and chipset selections change guest-visible hardware, not host speed. "
+                  "Audio is optional and may depend on Crostini SDL audio support."),
             foreground="#666", wraplength=500,
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(5, 10))
+        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(5, 10))
 
         def create() -> None:
             try:
@@ -348,7 +354,7 @@ class ChromeOSVMStudio:
                     name.get().strip(), int(ram.get()), int(disk.get()),
                     iso=iso.get().strip() or None, cpu_model=selected_model,
                     chipset=selected_chipset, secondary_disk_gib=secondary_size,
-                    cdrom_slot=selected_cdrom_slot,
+                    cdrom_slot=selected_cdrom_slot, sound_enabled=sound_enabled.get(),
                 )
                 dialog.destroy()
                 self.refresh()
@@ -358,7 +364,7 @@ class ChromeOSVMStudio:
                 messagebox.showerror("Could not create VM", str(exc), parent=dialog)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=9, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=10, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Create", command=create).pack(side="right")
         frame.columnconfigure(1, weight=1)
@@ -412,6 +418,7 @@ class ChromeOSVMStudio:
         cpu_model = tk.StringVar(value=CPU_MODEL_LABELS[cfg.cpu_model])
         chipset = tk.StringVar(value=CHIPSET_LABELS[cfg.chipset])
         cdrom_slot = tk.StringVar(value=IDE_CDROM_SLOT_LABELS[cfg.cdrom_slot])
+        sound_enabled = tk.BooleanVar(value=cfg.sound_enabled)
         iso = tk.StringVar(value=cfg.iso_path or "")
 
         ttk.Label(frame, text="Memory (MiB)").grid(row=0, column=0, sticky="w", pady=6)
@@ -443,12 +450,17 @@ class ChromeOSVMStudio:
             f"Secondary IDE disk: {cfg.secondary_disk_gib} GiB (IDE1 master)"
             if cfg.secondary_disk_gib is not None else "Secondary IDE disk: not attached"
         )
+        ttk.Checkbutton(
+            frame, text="Enable Sound Blaster 16 / PC speaker audio (SDL output)",
+            variable=sound_enabled,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 4))
         ttk.Label(
             frame,
             text=(f"Primary disk: {cfg.disk_gib} GiB. {secondary_text}. "
-                  "Detaching a secondary disk preserves disk2.raw in the VM folder."),
+                  "Detaching a secondary disk preserves disk2.raw in the VM folder. "
+                  "Audio output depends on the Bochs build and Crostini SDL audio integration."),
             foreground="#666", wraplength=520,
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 12))
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(6, 12))
 
         def save() -> None:
             try:
@@ -464,6 +476,7 @@ class ChromeOSVMStudio:
                 self.manager.update_profile(
                     name, int(ram.get()), int(cpu.get()), iso.get().strip() or None,
                     selected_model, selected_chipset, selected_cdrom_slot,
+                    sound_enabled.get(),
                 )
                 dialog.destroy()
                 self.refresh()
@@ -472,7 +485,7 @@ class ChromeOSVMStudio:
                 messagebox.showerror("Could not save VM", str(exc), parent=dialog)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=7, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=8, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Save changes", command=save).pack(side="right")
         frame.columnconfigure(1, weight=1)

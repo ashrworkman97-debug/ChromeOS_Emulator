@@ -42,6 +42,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--boot-order", type=parse_boot_order, default=None,
         help="BIOS boot order: auto or comma-separated floppy,cdrom,disk,network",
     )
+    create.add_argument("--sound", action="store_true",
+                        help="enable emulated Sound Blaster 16 and PC speaker audio output")
     create.add_argument("--iso", type=Path)
     boot_order = cmds.add_parser("set-boot-order", help="set or restore a VM's BIOS boot priority")
     boot_order.add_argument("name")
@@ -95,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
                 secondary_disk_gib=args.secondary_disk_gib,
                 cdrom_slot=args.cdrom_slot,
                 boot_order=args.boot_order,
+                sound_enabled=args.sound,
             )
             second = (
                 f" plus a {cfg.secondary_disk_gib} GiB IDE1-master disk"
@@ -104,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Created {cfg.name} with a {cfg.disk_gib} GiB primary sparse disk{second}, "
                 f"CPU model {cfg.cpu_model}, {cfg.chipset} chipset, "
                 f"and CD-ROM position {cfg.cdrom_slot}. "
+                f"Audio: {'SB16/PC speaker enabled' if cfg.sound_enabled else 'disabled'}. "
                 f"BIOS boot order: {', '.join(cfg.boot_order) if cfg.boot_order else 'automatic'}."
             )
         elif args.command == "list":
@@ -121,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Name: {cfg.name}\nBackend: {cfg.backend}\n"
                 f"State: {'running' if manager.is_running(cfg.name) else 'stopped'}\n"
                 f"RAM: {cfg.memory_mib} MiB\nCPU model: {cfg.cpu_model}\n"
-                f"Chipset: {cfg.chipset}\nCPU IPS: {cfg.cpu_ips:,}\n"
+                f"Chipset: {cfg.chipset}\nSound: {'SB16/PC speaker enabled' if cfg.sound_enabled else 'disabled'}\nCPU IPS: {cfg.cpu_ips:,}\n"
                 f"Primary disk: {cfg.disk_path}\n"
                 f"Secondary disk: {cfg.secondary_disk_path or 'not attached'}\n"
                 f"CD-ROM IDE position: {cfg.cdrom_slot}\n"

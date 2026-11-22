@@ -8,6 +8,12 @@ This project is at an early stage. The first usable backend is [Bochs](https://b
 
 Select a VM in the library and choose **Edit VM…**. Stop the VM before changing settings. The editor can change RAM, Bochs CPU IPS, the pre-defined x86 CPU model, and the attached CD/DVD image; use **Eject ISO** to clear CD/DVD media. CPU model choices include 386SX, 486DX4, Pentium/Pentium MMX, AMD K6-2, Pentium II/III/4, Core Duo T2400, and Atom N270, plus the Bochs build default. CPU IPS remains a separate timing calibration setting. The PCI chipset can be selected independently as Intel i430FX, i440FX, or i440BX; i440FX is the default. These are Bochs-documented PCI chipset models, not host CPU settings, and availability depends on PCI support in the installed Bochs build. The model changes guest-visible CPU features; it does not accelerate Bochs on the Chromebook. The **Attach/Eject floppy A** and **Attach/Eject floppy B** controls manage two raw floppy drives separately. Bochs supports standard 160K through 2.88M image capacities; the manager checks exact sizes and attaches both images write-protected by default. BIOS floppy boot uses drive A, so the boot order tries A first when present, then CD/DVD if present, then hard disk. Drive B remains available as secondary media to guests that support it. Virtual disk resizing is not supported yet.
 
+## Optional audio
+
+In **New VM** or **Edit VM**, enable **Sound Blaster 16 / PC speaker audio** for older games and operating systems that use those devices. It is off by default. The generated Bochs config enables the SB16 ISA sound card and PC speaker, routes PCM output through Bochs' SDL sound driver, and leaves microphone input and MIDI output disabled. Actual playback depends on the installed Bochs build and Crostini's SDL/audio integration; if audio initialization fails or the guest is silent, turn this option off and inspect the Bochs log. Audio emulation can add CPU overhead on a low-power Chromebook.
+
+CLI creation supports the same option with `--sound`.
+
 ## BIOS boot priority
 
 Select a VM and choose **Boot order…** to edit the BIOS sequence. The editor accepts one to three unique devices in priority order: floppy A, CD/DVD, hard disk, or network boot ROM. **Automatic** preserves the original media-aware behavior: floppy A first when attached, then CD/DVD when attached, then the primary hard disk. A manually selected floppy or CD/DVD entry requires that media to remain attached; the manager refuses to eject a selected boot device until the order is changed. Existing profiles without a `boot_order` field remain automatic.
@@ -143,7 +149,7 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 ## Roadmap
 
 1. Native Crostini desktop manager, VM library, sparse raw disks, Bochs GUI launch/stop, logs, ISO selection/ejection, editable RAM/CPU settings, and confirmed deletion. (Implemented; CI GUI smoke-tested.)
-2. Extend hardware configuration (machine family, display, IDE/ATA device choices, and removable-media behavior). (Pre-defined CPU model and PCI chipset selection, read-only floppy A/B media, two-channel IDE storage, selectable CD-ROM placement, and the native BIOS boot-priority editor are implemented; broader device selection remains.)
+2. Extend hardware configuration (machine family, display, IDE/ATA device choices, removable-media behavior, and optional audio). (Pre-defined CPU model and PCI chipset selection, read-only floppy A/B media, two-channel IDE storage, selectable CD-ROM placement, BIOS boot priority, and optional SB16/PC-speaker audio are implemented; broader device selection remains.)
 3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, static validation, and non-destructive VM diagnostics in the GUI/CLI. (Implemented and tested.) Diagnostics report disk/media/firmware/config health and explain guest shutdown behavior.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
 5. Storage import/export, clone, backup, and disk resizing with safeguards.

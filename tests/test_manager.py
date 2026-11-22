@@ -134,6 +134,54 @@ class ManagerTests(unittest.TestCase):
         )
         self.assertNotIn("qemu", config.lower())
 
+    def test_optional_sb16_audio_is_disabled_by_default_and_renders_documented_sdl_devices(self):
+        silent = self.manager.create("silent-audio")
+        self.assertFalse(silent.sound_enabled)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/VGABIOS-lgpl-latest")]):
+            silent_config = self.manager.render_bochsrc(silent)
+        self.assertNotIn("sb16:", silent_config)
+
+        audible = self.manager.create("sound-enabled", sound_enabled=True)
+        self.assertTrue(audible.sound_enabled)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/VGABIOS-lgpl-latest")]):
+            sound_config = self.manager.render_bochsrc(audible)
+        self.assertIn("sound: waveoutdrv=sdl, waveindrv=dummy, midioutdrv=dummy", sound_config)
+        self.assertIn("speaker: enabled=1, mode=sound, volume=10", sound_config)
+        self.assertIn("sb16: enabled=1, midimode=0, wavemode=1, dmatimer=600000", sound_config)
+        validate_bochsrc_text(sound_config)
+
+    def test_legacy_profile_without_sound_field_defaults_to_disabled(self):
+        cfg = self.manager.create("legacy-audio")
+        profile = self.manager.config_path(cfg.name)
+        raw = json.loads(profile.read_text(encoding="utf-8"))
+        raw.pop("sound_enabled")
+        profile.write_text(json.dumps(raw), encoding="utf-8")
+        self.assertFalse(self.manager.load(cfg.name).sound_enabled)
+
+    def test_profile_sound_setting_is_preserved_and_custom_config_cannot_silently_disable_it(self):
+        cfg = self.manager.create("editable-sound")
+        disk = Path(cfg.disk_path)
+        disk_size = disk.stat().st_size
+        updated = self.manager.update_profile(
+            cfg.name, cfg.memory_mib, cfg.cpu_ips, cfg.iso_path, sound_enabled=True
+        )
+        self.assertTrue(updated.sound_enabled)
+        self.assertEqual(disk.stat().st_size, disk_size)
+        with patch.object(self.manager, "_find_bios",
+                          side_effect=[Path("/mock/BIOS-bochs-latest"),
+                                       Path("/mock/VGABIOS-lgpl-latest")]):
+            generated = self.manager.render_bochsrc(updated)
+        disabled_custom = generated.replace(
+            "sb16: enabled=1, midimode=0, wavemode=1, dmatimer=600000",
+            "sb16: enabled=0, midimode=0, wavemode=0, dmatimer=600000",
+        )
+        with self.assertRaisesRegex(VMError, "preserve the SB16/PC-speaker audio"):
+            self.manager.validate_bochsrc_for_vm(cfg.name, disabled_custom)
+
     def test_cpu_model_round_trips_and_is_rendered_in_documented_syntax(self):
         cfg = self.manager.create("pentium-pc", cpu_model="pentium")
         loaded = self.manager.load(cfg.name)
