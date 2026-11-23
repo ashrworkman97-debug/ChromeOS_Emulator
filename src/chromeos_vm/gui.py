@@ -144,6 +144,7 @@ class ChromeOSVMStudio:
         self.table.bind("<Double-1>", lambda _event: self.start_vm())
 
         action_panel = ttk.Frame(content, style="Panel.TFrame", padding=13, width=190)
+        self.action_panel = action_panel
         action_panel.pack(side="right", fill="y", padx=(12, 0))
         action_panel.pack_propagate(False)
         ttk.Label(action_panel, text="ACTIONS", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 10))
@@ -856,6 +857,17 @@ class ChromeOSVMStudio:
         except (VMError, OSError) as exc:
             messagebox.showerror("Could not detach secondary disk", str(exc), parent=self.root)
 
+    def _set_backup_busy(self, busy: bool) -> None:
+        self._backup_task_active = busy
+
+        def update_buttons(parent) -> None:
+            for child in parent.winfo_children():
+                if isinstance(child, ttk.Button):
+                    child.state(["disabled"] if busy else ["!disabled"])
+                update_buttons(child)
+
+        update_buttons(self.action_panel)
+
     def export_backup(self) -> None:
         name = self.selected_name()
         if not name:
@@ -873,7 +885,7 @@ class ChromeOSVMStudio:
         if getattr(self, "_backup_task_active", False):
             self._status("A backup or restore operation is already running.")
             return
-        self._backup_task_active = True
+        self._set_backup_busy(True)
         self._status(f"Exporting {name}; large virtual disks may take some time…")
 
         def worker() -> None:
@@ -885,7 +897,7 @@ class ChromeOSVMStudio:
                 error = exc
 
             def finish() -> None:
-                self._backup_task_active = False
+                self._set_backup_busy(False)
                 if error is not None:
                     messagebox.showerror("Backup export failed", str(error), parent=self.root)
                     self._status("Backup export failed; the original VM was not changed.")
@@ -925,7 +937,7 @@ class ChromeOSVMStudio:
         if new_name is None:
             return
         selected_name = new_name.strip() or None
-        self._backup_task_active = True
+        self._set_backup_busy(True)
         self._status("Validating backup and restoring virtual disk files…")
 
         def worker() -> None:
@@ -937,7 +949,7 @@ class ChromeOSVMStudio:
                 error = exc
 
             def finish() -> None:
-                self._backup_task_active = False
+                self._set_backup_busy(False)
                 if error is not None:
                     messagebox.showerror("Backup restore failed", str(error), parent=self.root)
                     self._status("Backup restore failed; no existing VM was overwritten.")

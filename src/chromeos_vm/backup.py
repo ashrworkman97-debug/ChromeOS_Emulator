@@ -119,6 +119,11 @@ def export_vm(manager: VMManager, name: str, destination: Path | str) -> Path:
                 archive.write(secondary, "disk2.raw", compress_type=zipfile.ZIP_DEFLATED,
                               compresslevel=1)
 
+        # A CLI caller could start Bochs while the archive was being written.
+        # Do not publish a backup if the guest became active during the copy.
+        if manager.is_running(name):
+            raise VMError("Bochs started while the backup was being written; the incomplete backup was discarded.")
+
         # Prefer an atomic same-filesystem link. Fall back to an exclusive
         # create-and-copy on shared folders that do not support hard links.
         try:

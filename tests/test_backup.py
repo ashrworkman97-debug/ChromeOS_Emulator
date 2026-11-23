@@ -88,6 +88,15 @@ class BackupTests(unittest.TestCase):
         with self.assertRaisesRegex(VMError, "already exists"):
             export_vm(self.manager, cfg.name, destination)
 
+
+    def test_export_discards_archive_if_vm_starts_during_copy(self):
+        cfg, _iso = self._make_vm()
+        destination = self.root / "raced-backup.zip"
+        with patch.object(self.manager, "is_running", side_effect=[False, True]):
+            with self.assertRaisesRegex(VMError, "started while the backup"):
+                export_vm(self.manager, cfg.name, destination)
+        self.assertFalse(destination.exists())
+
     def test_import_rejects_path_traversal_and_unknown_entries(self):
         cfg, _iso = self._make_vm()
         good = self.root / "good.zip"
