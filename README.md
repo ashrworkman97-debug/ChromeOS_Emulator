@@ -49,18 +49,18 @@ Detaching never erases the secondary disk. The CD-ROM slot can be changed in **E
 
 Use **Export backup…** in the native VM manager, or run:
 
-\`\`\`sh
+```sh
 chromeos-vm export win98 /path/to/win98.cvms.zip
-\`\`\`
+```
 
 Export requires Bochs to be stopped so the guest disks are not copied while they are changing. The ZIP contains the VM profile, primary raw disk, and disk2.raw when it exists. A detached secondary disk is included too, preserving data that was intentionally detached from the guest.
 
 Restore through **Import backup…** or:
 
-\`\`\`sh
+```sh
 chromeos-vm import /path/to/win98.cvms.zip
 chromeos-vm import /path/to/win98.cvms.zip --name win98-copy
-\`\`\`
+```
 
 Restore always creates a new VM folder and refuses to overwrite an existing VM. It rewrites managed disk paths for the new private folder. The archive is checked for unexpected paths, duplicate entries, links, unsupported compression, oversized metadata, inconsistent disk geometry, and unsafe expansion before any disk is installed.
 

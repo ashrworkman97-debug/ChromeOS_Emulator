@@ -96,8 +96,7 @@ class BackupTests(unittest.TestCase):
         bad = self.root / "traversal.zip"
         with zipfile.ZipFile(bad, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             for filename, data in entries:
-                archive.writestr(filename, data)
-            archive.writestr("../outside.txt", b"no")
+                archive.writestr("../outside.txt" if filename == "disk2.raw" else filename, data)
         with self.assertRaisesRegex(VMError, "unsafe entry"):
             import_vm(VMManager(self.restore_home), bad)
 
@@ -149,7 +148,8 @@ class BackupTests(unittest.TestCase):
             warnings.simplefilter("ignore", UserWarning)
             with zipfile.ZipFile(bad, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 for filename, data in entries:
-                    archive.writestr(filename, data)
+                    if filename != "disk2.raw":
+                        archive.writestr(filename, data)
                 archive.writestr("vm.json", json.dumps({"name": "replacement"}))
         with self.assertRaisesRegex(VMError, "duplicate entry"):
             import_vm(VMManager(self.restore_home), bad)

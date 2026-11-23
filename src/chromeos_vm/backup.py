@@ -79,7 +79,6 @@ def export_vm(manager: VMManager, name: str, destination: Path | str) -> Path:
     target = Path(destination).expanduser()
     if not target.name:
         raise VMError("Choose a filename for the backup.")
-    target.parent.mkdir(parents=True, exist_ok=True)
     parent = target.parent.resolve()
     try:
         parent.relative_to(directory)
@@ -87,6 +86,8 @@ def export_vm(manager: VMManager, name: str, destination: Path | str) -> Path:
         pass
     else:
         raise VMError("Save the backup outside the VM's own folder.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    parent = target.parent.resolve()
     if target.exists() or target.is_symlink():
         raise VMError(f"Backup destination already exists: {target}")
 
