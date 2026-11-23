@@ -58,6 +58,7 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(Path(attached.secondary_disk_path).read_bytes()[:20], b"secondary guest data")
         self.assertEqual(attached.iso_path, str(iso.resolve()))
         self.assertFalse(restored_manager.custom_bochsrc_path(attached.name).exists())
+        custom.unlink()  # Custom configs are intentionally excluded and block profile edits.
 
         detached_disk = self.manager.detach_secondary_disk(cfg.name)
         self.assertEqual(detached_disk.read_bytes()[:20], b"secondary guest data")
