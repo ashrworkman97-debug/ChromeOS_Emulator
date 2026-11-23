@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
 
+from .backup import export_vm, import_vm
 from .manager import (
     BOOT_DEVICE_LABELS, CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS,
     VMError, VMManager, default_boot_order,
@@ -149,6 +150,8 @@ class ChromeOSVMStudio:
 
         ttk.Button(action_panel, text="＋  New VM", style="Primary.TButton",
                    command=self.new_vm).pack(fill="x", pady=(0, 7))
+        ttk.Button(action_panel, text="Import backup…", style="Action.TButton",
+                   command=self.import_backup).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="▶  Boot", style="Accent.TButton",
                    command=self.start_vm).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="■  Stop", style="Action.TButton",
@@ -178,6 +181,8 @@ class ChromeOSVMStudio:
         self.config_button = ttk.Button(action_panel, text="Bochs config…", style="Action.TButton",
                                          command=self.edit_bochs_config)
         self.config_button.pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Export backup…", style="Action.TButton",
+                   command=self.export_backup).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Open folder", style="Action.TButton",
                    command=self.open_folder).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="View logs", style="Action.TButton",
@@ -850,6 +855,112 @@ class ChromeOSVMStudio:
             self._status(f"Detached {disk.name}; its data was preserved.")
         except (VMError, OSError) as exc:
             messagebox.showerror("Could not detach secondary disk", str(exc), parent=self.root)
+
+    def export_backup(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self.root,
+            title=f"Export {name} backup",
+            initialfile=f"{name}.cvms.zip",
+            defaultextension=".zip",
+            filetypes=[("ChromeOS VM Studio backups", "*.zip"), ("All files", "*")],
+        )
+        if not destination:
+            return
+        if getattr(self, "_backup_task_active", False):
+            self._status("A backup or restore operation is already running.")
+            return
+        self._backup_task_active = True
+        self._status(f"Exporting {name}; large virtual disks may take some time…")
+
+        def worker() -> None:
+            try:
+                result = export_vm(self.manager, name, destination)
+                error = None
+            except Exception as exc:
+                result = None
+                error = exc
+
+            def finish() -> None:
+                self._backup_task_active = False
+                if error is not None:
+                    messagebox.showerror("Backup export failed", str(error), parent=self.root)
+                    self._status("Backup export failed; the original VM was not changed.")
+                    return
+                self._status(f"Backup exported to {result}.")
+                messagebox.showinfo(
+                    "Backup exported",
+                    f"Saved {name} to:\n{result}\n\n"
+                    "The managed virtual disks are included. ISO/floppy images remain at their original external paths. "
+                    "Custom Bochs configuration, logs, and runtime state are not included.",
+                    parent=self.root,
+                )
+
+            try:
+                self.root.after(0, finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="vm-studio-export", daemon=True).start()
+
+    def import_backup(self) -> None:
+        source = filedialog.askopenfilename(
+            parent=self.root,
+            title="Import ChromeOS VM Studio backup",
+            filetypes=[("ChromeOS VM Studio backups", "*.zip"), ("ZIP archives", "*.zip"), ("All files", "*")],
+        )
+        if not source:
+            return
+        if getattr(self, "_backup_task_active", False):
+            self._status("A backup or restore operation is already running.")
+            return
+        new_name = simpledialog.askstring(
+            "Restore virtual machine",
+            "Optional new VM name (leave blank to keep the original name):",
+            parent=self.root,
+        )
+        if new_name is None:
+            return
+        selected_name = new_name.strip() or None
+        self._backup_task_active = True
+        self._status("Validating backup and restoring virtual disk files…")
+
+        def worker() -> None:
+            try:
+                restored = import_vm(self.manager, source, selected_name)
+                error = None
+            except Exception as exc:
+                restored = None
+                error = exc
+
+            def finish() -> None:
+                self._backup_task_active = False
+                if error is not None:
+                    messagebox.showerror("Backup restore failed", str(error), parent=self.root)
+                    self._status("Backup restore failed; no existing VM was overwritten.")
+                    return
+                self.refresh()
+                if restored is not None and self.table.exists(restored.name):
+                    self.table.selection_set(restored.name)
+                self._status(f"Restored {restored.name}. Check external ISO/floppy paths before booting.")
+                messagebox.showinfo(
+                    "VM restored",
+                    f"Restored {restored.name} into the private VM library.\n\n"
+                    "The managed virtual disks were restored. ISO/floppy images were not bundled, so their saved paths "
+                    "must still exist. Custom Bochs configuration, logs, and runtime state were not restored; "
+                    "the manager will generate a fresh Bochs config.",
+                    parent=self.root,
+                )
+
+            try:
+                self.root.after(0, finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="vm-studio-import", daemon=True).start()
 
     def open_folder(self) -> None:
         name = self.selected_name()

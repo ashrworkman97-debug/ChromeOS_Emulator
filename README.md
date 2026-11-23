@@ -45,6 +45,27 @@ CLI examples: chromeos-vm create retro-pc --disk-gib 8 --secondary-disk-gib 4 --
 
 Detaching never erases the secondary disk. The CD-ROM slot can be changed in **Edit VM…** while the VM is stopped and no custom bochsrc override is active.
 
+## Backup and restore
+
+Use **Export backup…** in the native VM manager, or run:
+
+\`\`\`sh
+chromeos-vm export win98 /path/to/win98.cvms.zip
+\`\`\`
+
+Export requires Bochs to be stopped so the guest disks are not copied while they are changing. The ZIP contains the VM profile, primary raw disk, and disk2.raw when it exists. A detached secondary disk is included too, preserving data that was intentionally detached from the guest.
+
+Restore through **Import backup…** or:
+
+\`\`\`sh
+chromeos-vm import /path/to/win98.cvms.zip
+chromeos-vm import /path/to/win98.cvms.zip --name win98-copy
+\`\`\`
+
+Restore always creates a new VM folder and refuses to overwrite an existing VM. It rewrites managed disk paths for the new private folder. The archive is checked for unexpected paths, duplicate entries, links, unsupported compression, oversized metadata, inconsistent disk geometry, and unsafe expansion before any disk is installed.
+
+Backups do **not** bundle guest OS installation media, attached ISO/floppy files, custom bochsrc.custom, logs, or runtime PID state. Saved ISO/floppy paths remain external and must still exist on the Chromebook after restore. A fresh generated Bochs configuration is created at the next boot. Keep a separate copy of any custom Bochs configuration you need. Backups can be large and may take time on a Chromebook; export and restore run off the GUI thread. Store backups somewhere with enough free space, and keep more than one copy of important guest data.
+
 ## Advanced Bochs configuration
 
 Select a stopped VM and choose **Bochs config…** to edit the complete bochsrc text in the native manager. **Validate** runs conservative static checks for required directives, memory/IPS ranges, disk layout, and common formatting mistakes. **Save custom config** stores a separate bochsrc.custom file which is used by the next boot; the generated bochsrc remains available as a reset point.
@@ -152,7 +173,7 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 2. Extend hardware configuration (machine family, display, IDE/ATA device choices, removable-media behavior, and optional audio). (Pre-defined CPU model and PCI chipset selection, read-only floppy A/B media, two-channel IDE storage, selectable CD-ROM placement, BIOS boot priority, and optional SB16/PC-speaker audio are implemented; broader device selection remains.)
 3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, static validation, and non-destructive VM diagnostics in the GUI/CLI. (Implemented and tested.) Diagnostics report disk/media/firmware/config health and explain guest shutdown behavior.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
-5. Storage import/export, clone, backup, and disk resizing with safeguards.
+5. ZIP backup/export and safe restore of managed raw disks, including detached secondary-disk data. (Implemented; clone and disk resizing remain future work.)
 6. Evaluate an optional accelerated non-QEMU KVM backend only for compatible guests on hosts that actually expose nested KVM.
 7. Reproducible end-to-end guest boot tests on representative Chromebook hardware and packaging polish.
 
@@ -164,7 +185,7 @@ A milestone is not complete just because a command or UI control exists: tests a
 python3 -m unittest discover -s tests -v
 ```
 
-CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display (including the BIOS boot-order editor), verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated primary disk, optional secondary IDE disk and CD-ROM position, attached floppy A/B images, explicit BIOS boot sequences, every CPU model, and all three PCI chipsets exposed by the app. Updater tests also exercise archive path, link, entry-count, and expanded-size defenses. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
+CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display (including the BIOS boot-order editor), verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated primary disk, optional secondary IDE disk and CD-ROM position, attached floppy A/B images, explicit BIOS boot sequences, every CPU model, and all three PCI chipsets exposed by the app. Updater tests also exercise archive path, link, entry-count, and expanded-size defenses. VM backup tests exercise round-trip disk restoration, detached secondary-disk preservation, external-media path retention, duplicate/path-traversal/symlink rejection, disk-size checks, and no-overwrite behavior. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
 
 ## License
 

@@ -116,5 +116,24 @@ class IDEStorageCLITests(unittest.TestCase):
         self.assertIn("Bochs: not installed", report)
         self.assertIn("Guest shutdown guidance:", report)
 
+
+    def test_export_and_import_commands_are_wired(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        destination = self.home.parent / "cli-backup.zip"
+        with patch("chromeos_vm.cli.export_vm", return_value=destination) as exporter:
+            result, output = self.run_cli("export", "vm-one", str(destination))
+        self.assertEqual(result, 0)
+        self.assertIn(str(destination), output)
+        exporter.assert_called_once()
+
+        restored = SimpleNamespace(name="restored-vm")
+        with patch("chromeos_vm.cli.import_vm", return_value=restored) as importer:
+            result, output = self.run_cli("import", str(destination), "--name", "restored-vm")
+        self.assertEqual(result, 0)
+        self.assertIn("Restored restored-vm", output)
+        importer.assert_called_once()
+
 if __name__ == "__main__":
     unittest.main()

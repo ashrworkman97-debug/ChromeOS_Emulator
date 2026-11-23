@@ -20,6 +20,7 @@
 | Audio | Optional SB16 ISA + PC speaker with SDL PCM output; disabled by default; MIDI/input disabled; requires sound support in Bochs and working Crostini audio routing |
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
 | Managed disk safety | Pre-boot private-path, regular-file, link-count, and exact-size checks |
+| Backup/restore | Stopped-VM ZIP export and safe no-overwrite restore; managed disks included, external ISO/floppy media and custom config excluded |
 
 ## Crostini
 
@@ -77,3 +78,8 @@ The app creates an empty virtual hard disk. The user supplies legally obtained g
 ## BIOS packages
 
 On Debian-based Crostini, install `bochsbios` and `vgabios` (the latter may alternatively be provided by `seabios`). Debian Trixie's Bochs package depends on the VGA BIOS package, while the Bochs system BIOS is supplied separately by `bochsbios`. The app resolves the installed ROM paths and refuses to launch if it cannot find both files, with a package-install hint. It does not bundle ROM files.
+
+
+## Backup and restore
+
+The ZIP backup format preserves vm.json, disk.raw, and optional disk2.raw. A detached disk2.raw is preserved even when it is not attached to the VM profile. Restore rewrites the managed disk paths and refuses to overwrite an existing VM. It does not bundle guest ISO/floppy media, custom Bochs config, logs, or runtime PID files. External media paths are retained and must still be valid on the destination Chromebook. This is an offline file backup, not a save-state or live snapshot.

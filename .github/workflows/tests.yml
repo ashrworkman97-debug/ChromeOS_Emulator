@@ -364,6 +364,8 @@ jobs:
               assert "Detach second disk" in button_labels
               assert "Boot order…" in button_labels
               assert "Diagnostics…" in button_labels
+              assert "Import backup…" in button_labels
+              assert "Export backup…" in button_labels
 
               # Exercise the actual create dialog and confirm chipset choices
               # are presented by native Tk widgets, not just manager APIs.
@@ -443,5 +445,5 @@ jobs:
               root.update()
               assert manager.load("dos-test").boot_order == ("disk",)
               root.destroy()
-          print("Native Tk GUI, IDE storage, and BIOS boot-priority dialog smoke test passed.")
+          print("Native Tk GUI, IDE storage, BIOS boot-priority, and backup/restore controls smoke test passed.")
           PY

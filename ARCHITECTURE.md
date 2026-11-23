@@ -68,3 +68,12 @@ crosvm is a VMM using Linux KVM and virtio devices, not a general PC chipset emu
 ## Optional audio
 
 A VM profile may opt into the Bochs SB16 ISA sound device and PC speaker. The generated config selects SDL for PCM wave output and disables wave input and MIDI output. The feature is off by default because sound plugins vary between distro builds and Crostini audio forwarding depends on the host environment. The app reports this as optional emulated hardware, not guaranteed Chromebook audio support.
+
+
+## VM backup and restore
+
+The backup layer exports only a stopped VM. It writes a versioned ZIP containing manifest.json, vm.json, disk.raw, and optional disk2.raw. If disk2.raw exists but has been detached from the profile, it is still included and restored as a detached disk so its data is not lost. The archive does not contain logs, PID/runtime files, generated Bochs configuration, or bochsrc.custom.
+
+Restore never extracts arbitrary archive paths. It accepts only the fixed member names, rejects duplicates, symlinks, encrypted/unsupported entries, unsafe compression ratios, and excessive metadata/expanded sizes, validates the profile and geometry-derived raw disk lengths, then streams disks into a staging directory under the VM storage root. It rewrites primary and attached-secondary disk paths to the new private directory and renames the completed staging folder into place. An existing VM name is never overwritten.
+
+Guest ISO/floppy paths in the profile remain external references; their image contents are not copied into the backup. The UI and CLI warn that these paths must still be available after restore. A custom Bochs config is deliberately not restored because it contains absolute paths and could point back to the original VM; the generated config is recreated at next boot. Backups are data copies, not live snapshots: export refuses a running VM, and users should shut down the guest cleanly first.
