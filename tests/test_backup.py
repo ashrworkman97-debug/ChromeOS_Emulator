@@ -56,6 +56,16 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(Path(attached.secondary_disk_path), restored_manager.vm_path(attached.name) / "disk2.raw")
         self.assertEqual(Path(attached.disk_path).read_bytes()[:18], b"primary guest data")
         self.assertEqual(Path(attached.secondary_disk_path).read_bytes()[:20], b"secondary guest data")
+        for restored_disk in (Path(attached.disk_path), Path(attached.secondary_disk_path)):
+            disk_stat = restored_disk.stat()
+            self.assertEqual(disk_stat.st_size, SMALL_GEOMETRY[3])
+            self.assertLess(
+                disk_stat.st_blocks * 512, disk_stat.st_size,
+                "Restore should not allocate the all-zero tail of a sparse virtual disk.",
+            )
+            with restored_disk.open("rb") as stream:
+                stream.seek(-4096, 2)
+                self.assertEqual(stream.read(4096), bytes(4096))
         self.assertEqual(attached.iso_path, str(iso.resolve()))
         self.assertFalse(restored_manager.custom_bochsrc_path(attached.name).exists())
         custom.unlink()  # Custom configs are intentionally excluded and block profile edits.
