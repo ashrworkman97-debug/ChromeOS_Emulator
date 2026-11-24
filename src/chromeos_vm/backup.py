@@ -20,6 +20,8 @@ BACKUP_VERSION = 1
 METADATA_LIMIT = 64 * 1024
 MAX_BACKUP_BYTES = 2 * MAX_DISK_GIB * 1024**3 + 2 * METADATA_LIMIT
 ALLOWED_MEMBERS = frozenset({"manifest.json", "vm.json", "disk.raw", "disk2.raw"})
+COPY_CHUNK_BYTES = 1024 * 1024
+SPARSE_BLOCK_BYTES = 4096
 
 
 def _vm_directory(manager: VMManager, name: str) -> Path:
@@ -183,27 +185,43 @@ def _read_metadata(archive: zipfile.ZipFile, info: zipfile.ZipInfo, label: str) 
 def _copy_member(
     archive: zipfile.ZipFile, info: zipfile.ZipInfo, destination: Path, expected_size: int
 ) -> None:
+    """Restore a raw disk while recreating zero-filled regions as sparse holes."""
     copied = 0
     try:
         with archive.open(info, "r") as source, destination.open("xb") as output:
             while True:
-                chunk = source.read(1024 * 1024)
+                chunk = source.read(COPY_CHUNK_BYTES)
                 if not chunk:
                     break
                 copied += len(chunk)
                 if copied > expected_size:
                     raise VMError(f"Backup disk {info.filename} expands beyond its expected size.")
-                output.write(chunk)
+
+                # Raw disks created by the manager are sparse. ZIP files preserve
+                # their logical zero bytes but not their filesystem hole map, so
+                # rebuild holes in 4 KiB blocks instead of allocating the entire
+                # virtual capacity during restore.
+                for offset in range(0, len(chunk), SPARSE_BLOCK_BYTES):
+                    block = chunk[offset:offset + SPARSE_BLOCK_BYTES]
+                    if block.count(b"\0") == len(block):
+                        output.seek(len(block), os.SEEK_CUR)
+                    else:
+                        output.write(block)
+
+            if copied != expected_size:
+                raise VMError(
+                    f"Backup disk {info.filename} contains {copied:,} bytes; expected {expected_size:,}."
+                )
+            # Seeking beyond EOF does not set the final logical length.
+            output.truncate(expected_size)
             output.flush()
             os.fsync(output.fileno())
+    except VMError:
+        destination.unlink(missing_ok=True)
+        raise
     except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
         destination.unlink(missing_ok=True)
         raise VMError(f"Could not restore {info.filename}: {exc}") from exc
-    if copied != expected_size:
-        destination.unlink(missing_ok=True)
-        raise VMError(
-            f"Backup disk {info.filename} contains {copied:,} bytes; expected {expected_size:,}."
-        )
 
 
 def import_vm(manager: VMManager, source: Path | str, name: str | None = None) -> VMConfig:
