@@ -318,6 +318,7 @@ def import_vm(manager: VMManager, source: Path | str, name: str | None = None) -
         stage = Path(tempfile.mkdtemp(
             prefix=f".{target_name}.restore-", dir=manager.home
         ))
+        target_claimed = False
         try:
             _copy_member(archive, by_name["disk.raw"], stage / "disk.raw", primary_size)
             if has_secondary and secondary_size is not None:
@@ -327,10 +328,27 @@ def import_vm(manager: VMManager, source: Path | str, name: str | None = None) -
             (stage / "vm.json").write_text(
                 json.dumps(asdict(cfg), indent=2) + "\n", encoding="utf-8"
             )
-            if target_dir.exists() or target_dir.is_symlink():
-                raise VMError(f"VM '{target_name}' appeared during restore; nothing was overwritten.")
-            stage.rename(target_dir)
+
+            # Claim the final name with mkdir: unlike rename(stage, target),
+            # mkdir cannot replace a concurrently-created empty directory.
+            # Move data first and publish vm.json last, so library scans never
+            # mistake a partially restored directory for a usable VM.
+            try:
+                target_dir.mkdir(mode=0o700)
+            except FileExistsError as exc:
+                raise VMError(
+                    f"VM '{target_name}' appeared during restore; nothing was overwritten."
+                ) from exc
+            target_claimed = True
+            for filename in ("disk.raw", "disk2.raw", "logs", "runtime"):
+                staged_item = stage / filename
+                if staged_item.exists():
+                    staged_item.rename(target_dir / filename)
+            (stage / "vm.json").rename(target_dir / "vm.json")
+            stage.rmdir()
         except Exception:
+            if target_claimed:
+                shutil.rmtree(target_dir, ignore_errors=True)
             shutil.rmtree(stage, ignore_errors=True)
             raise
 
