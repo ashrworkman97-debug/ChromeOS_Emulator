@@ -157,6 +157,35 @@ class BackupTests(unittest.TestCase):
         with self.assertRaisesRegex(VMError, "already exists"):
             import_vm(restored_manager, good)
 
+    def test_import_does_not_replace_empty_directory_created_during_restore(self):
+        _cfg, _iso = self._make_vm()
+        good = self.root / "good.zip"
+        export_vm(self.manager, "source-vm", good)
+        restored_manager = VMManager(self.restore_home)
+        target_dir = restored_manager.vm_path("source-vm")
+
+        # Simulate another process creating the destination after import's
+        # initial existence check but immediately before its final claim.
+        original_mkdir = Path.mkdir
+        injected = {"done": False}
+
+        def create_racing_directory(path, *args, **kwargs):
+            if path == target_dir and not injected["done"]:
+                injected["done"] = True
+                original_mkdir(path, mode=0o700)
+            return original_mkdir(path, *args, **kwargs)
+
+        with patch.object(Path, "mkdir", autospec=True, side_effect=create_racing_directory):
+            with self.assertRaisesRegex(VMError, "appeared during restore"):
+                import_vm(restored_manager, good)
+
+        self.assertTrue(injected["done"], "The destination-creation race was not exercised.")
+        self.assertTrue(target_dir.is_dir())
+        self.assertEqual(list(target_dir.iterdir()), [],
+                         "The directory created by the competing process must remain untouched.")
+        self.assertEqual(list(self.restore_home.glob(".source-vm.restore-*")), [],
+                         "Failed restore staging data must be cleaned up.")
+
     def test_import_rejects_duplicate_zip_members(self):
         cfg, _iso = self._make_vm()
         good = self.root / "good.zip"
