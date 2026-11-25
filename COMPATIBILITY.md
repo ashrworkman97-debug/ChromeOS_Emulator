@@ -20,7 +20,7 @@
 | Audio | Optional SB16 ISA + PC speaker with SDL PCM output; disabled by default; MIDI/input disabled; requires sound support in Bochs and working Crostini audio routing |
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
 | Managed disk safety | Pre-boot private-path, regular-file, link-count, and exact-size checks |
-| Backup/restore | Stopped-VM ZIP export and safe no-overwrite restore; restore recreates all-zero 4 KiB blocks as sparse holes where supported; managed disks included, external ISO/floppy media and custom config excluded |
+| Backup/restore | Stopped-VM ZIP export and safe no-overwrite restore; atomic destination-directory claim prevents replacement of a concurrently-created empty folder; `vm.json` is published last; sparse holes recreated where supported; external ISO/floppy media and custom config excluded |
 
 ## Crostini
 
@@ -82,4 +82,4 @@ On Debian-based Crostini, install `bochsbios` and `vgabios` (the latter may alte
 
 ## Backup and restore
 
-The ZIP backup format preserves vm.json, disk.raw, and optional disk2.raw. A detached disk2.raw is preserved even when it is not attached to the VM profile. Restore rewrites the managed disk paths and refuses to overwrite an existing VM. While restoring, the importer seeks across all-zero 4 KiB blocks and truncates to the full logical disk length, preserving sparse allocation where the destination filesystem supports holes. Actual allocated bytes depend on filesystem block size and behavior. It does not bundle guest ISO/floppy media, custom Bochs config, logs, or runtime PID files. External media paths are retained and must still be valid on the destination Chromebook. This is an offline file backup, not a save-state or live snapshot.
+The ZIP backup format preserves vm.json, disk.raw, and optional disk2.raw. A detached disk2.raw is preserved even when it is not attached to the VM profile. Restore rewrites the managed disk paths and refuses to overwrite an existing VM. While restoring, the importer seeks across all-zero 4 KiB blocks and truncates to the full logical disk length, preserving sparse allocation where the destination filesystem supports holes. It claims the final VM directory with an atomic `mkdir` rather than renaming over a possibly-created empty directory, and writes `vm.json` last so incomplete restores are not discoverable as VMs. If another process creates the destination name during restore, that directory is preserved and the import aborts. Actual allocated bytes depend on filesystem block size and behavior. It does not bundle guest ISO/floppy media, custom Bochs config, logs, or runtime PID files. External media paths are retained and must still be valid on the destination Chromebook. This is an offline file backup, not a save-state or live snapshot.
