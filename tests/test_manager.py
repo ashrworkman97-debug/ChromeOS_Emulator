@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -1052,6 +1053,30 @@ class IDEStorageTests(unittest.TestCase):
             validate_bochsrc_text(
                 generated.replace("boot: disk", "boot: network, cdrom, floppy, disk")
             )
+
+
+    def test_operation_lock_rejects_symlink_lock_file(self):
+        cfg = self.manager.create("lock-symlink")
+        lock_root = self.manager.home / ".locks"
+        lock_root.mkdir()
+        outside = self.root / "outside-lock-target"
+        outside.write_text("must remain unchanged", encoding="utf-8")
+        (lock_root / f"{cfg.name}.lock").symlink_to(outside)
+
+        with self.assertRaisesRegex(VMError, "securely open"):
+            with self.manager.operation_lock(cfg.name):
+                self.fail("A symlinked lock file must never be followed")
+        self.assertEqual(outside.read_text(encoding="utf-8"), "must remain unchanged")
+
+    def test_start_refuses_while_another_manager_holds_the_vm_lock(self):
+        cfg = self.manager.create("locked-start")
+        other = VMManager(self.manager.home)
+
+        with self.manager.operation_lock(cfg.name):
+            with patch.object(other, "_start_locked") as launch:
+                with self.assertRaisesRegex(VMError, "Another app-managed operation"):
+                    other.start(cfg.name)
+                launch.assert_not_called()
 
 
 if __name__ == "__main__":

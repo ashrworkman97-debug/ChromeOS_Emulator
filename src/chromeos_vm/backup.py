@@ -57,6 +57,12 @@ def _disk_size_gib(byte_count: int) -> int:
 
 
 def export_vm(manager: VMManager, name: str, destination: Path | str) -> Path:
+    """Export a stopped VM while excluding concurrent app-managed lifecycle operations."""
+    with manager.operation_lock(name):
+        return _export_vm_locked(manager, name, destination)
+
+
+def _export_vm_locked(manager: VMManager, name: str, destination: Path | str) -> Path:
     """Write a ZIP backup without changing the source VM or its guest disks."""
     cfg = manager.load(name)
     if manager.is_running(name):

@@ -1,6 +1,7 @@
 import json
 import stat
 import tempfile
+import threading
 import unittest
 import warnings
 import zipfile
@@ -202,6 +203,45 @@ class BackupTests(unittest.TestCase):
                 archive.writestr("vm.json", json.dumps({"name": "replacement"}))
         with self.assertRaisesRegex(VMError, "duplicate entry"):
             import_vm(VMManager(self.restore_home), bad)
+
+
+    def test_export_lock_prevents_another_manager_from_starting_the_vm(self):
+        cfg, _iso = self._make_vm()
+        other = VMManager(self.source_home)
+        destination = self.root / "paused-export.zip"
+        export_entered = threading.Event()
+        finish_export = threading.Event()
+        export_results = []
+        export_errors = []
+
+        def pause_export(_manager, _name, _destination):
+            export_entered.set()
+            if not finish_export.wait(3):
+                raise RuntimeError("test export was not released")
+            return destination
+
+        def run_export():
+            try:
+                export_results.append(export_vm(self.manager, cfg.name, destination))
+            except Exception as exc:
+                export_errors.append(exc)
+
+        with patch("chromeos_vm.backup._export_vm_locked", side_effect=pause_export):
+            worker = threading.Thread(target=run_export, daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(export_entered.wait(2), "export did not enter its locked section")
+                with patch.object(other, "_start_locked") as launch:
+                    with self.assertRaisesRegex(VMError, "Another app-managed operation"):
+                        other.start(cfg.name)
+                    launch.assert_not_called()
+            finally:
+                finish_export.set()
+                worker.join(4)
+
+        self.assertFalse(worker.is_alive(), "export worker did not finish")
+        self.assertEqual(export_results, [destination])
+        self.assertEqual(export_errors, [])
 
 
 if __name__ == "__main__":

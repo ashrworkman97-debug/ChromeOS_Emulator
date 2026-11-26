@@ -7,16 +7,19 @@ invokes QEMU.
 from __future__ import annotations
 
 import errno
+import fcntl
 import json
 import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$")
 CONFIG_VERSION = 2
@@ -394,6 +397,60 @@ class VMManager:
 
     def config_path(self, name: str) -> Path:
         return self.vm_path(name) / "vm.json"
+
+    @contextmanager
+    def operation_lock(self, name: str) -> Iterator[None]:
+        """Acquire a non-blocking per-VM lock shared by GUI and CLI processes."""
+        directory = self.vm_path(name)
+        home = self.home.resolve()
+        profile = directory / "vm.json"
+        if (directory.is_symlink() or directory.resolve().parent != home
+                or profile.is_symlink() or not profile.is_file()):
+            raise VMError("The VM directory or profile is missing or outside private storage.")
+
+        # Keep locks outside VM directories: deleting a VM must not unlink a
+        # lock inode while another process is waiting on it.
+        lock_root = self.home / ".locks"
+        try:
+            lock_root.mkdir(mode=0o700, exist_ok=True)
+            if lock_root.is_symlink() or lock_root.resolve().parent != home:
+                raise VMError("The VM operation-lock folder is not a private directory.")
+            lock_path = lock_root / f"{name}.lock"
+            flags = (
+                os.O_CREAT | os.O_RDWR
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            fd = os.open(lock_path, flags, 0o600)
+        except OSError as exc:
+            raise VMError(f"Could not securely open the VM operation lock: {exc}") from exc
+
+        locked = False
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise VMError("The VM operation lock must be a private regular file.")
+            os.fchmod(fd, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise VMError(
+                    "Another app-managed operation is in progress for this VM. "
+                    "Wait for it to finish, then try again."
+                ) from exc
+            except OSError as exc:
+                raise VMError(
+                    f"The VM storage filesystem does not support advisory locking: {exc}"
+                ) from exc
+            locked = True
+            yield
+        finally:
+            if locked:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+            os.close(fd)
 
     def custom_bochsrc_path(self, name: str) -> Path:
         return self.vm_path(name) / "bochsrc.custom"
@@ -1164,6 +1221,10 @@ class VMManager:
         return self._running_pid(name) is not None
 
     def start(self, name: str, bochs_override: str | None = None) -> int:
+        with self.operation_lock(name):
+            return self._start_locked(name, bochs_override)
+
+    def _start_locked(self, name: str, bochs_override: str | None = None) -> int:
         cfg = self.load(name)
         if self.is_running(name):
             raise VMError(f"VM '{name}' appears to be running already.")
@@ -1223,6 +1284,10 @@ class VMManager:
         return pid
 
     def stop(self, name: str) -> None:
+        with self.operation_lock(name):
+            self._stop_locked(name)
+
+    def _stop_locked(self, name: str) -> None:
         pid_file = self.vm_path(name) / "runtime/bochs.pid"
         pid = self._running_pid(name)
         if pid is None:
@@ -1375,6 +1440,10 @@ class VMManager:
         return "\n".join(lines)
 
     def delete(self, name: str) -> None:
+        with self.operation_lock(name):
+            self._delete_locked(name)
+
+    def _delete_locked(self, name: str) -> None:
         self.load(name)
         if self.is_running(name):
             raise VMError("Stop the VM before deleting it.")
