@@ -84,6 +84,37 @@ jobs:
           PY
 
 
+      - name: Parse and initialize optional SB16 and PC speaker audio with real Bochs
+        run: |
+          PYTHONPATH=src python3 - <<'PY'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from chromeos_vm.manager import VMManager
+
+          with tempfile.TemporaryDirectory() as temp:
+              manager = VMManager(Path(temp) / "vms")
+              vm = manager.create("sound-ci", memory_mib=128, disk_gib=1, sound_enabled=True)
+              config = manager.render_bochsrc(vm)
+              assert "sb16: enabled=1" in config
+              config_path = manager.vm_path(vm.name) / "bochsrc.sound-ci"
+              config_path.write_text(config, encoding="utf-8")
+              log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+              result = subprocess.run(
+                  ["xvfb-run", "-a", "env", "SDL_VIDEODRIVER=x11",
+                   "SDL_AUDIODRIVER=dummy", "bochs", "-benchmark", "1", "-q",
+                   "-f", str(config_path)],
+                  capture_output=True, text=True, timeout=45, check=False,
+              )
+              log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+              if "cpu loop quit" not in log_text or ">>PANIC<<" in log_text:
+                  raise SystemExit(
+                      f"Bochs rejected optional SB16 audio (exit {result.returncode}):\n"
+                      + result.stdout[-2500:] + result.stderr[-2500:] + log_text[-6000:]
+                  )
+              print("Bochs initialized SB16 ISA audio and PC speaker with SDL output")
+          PY
+
       - name: Parse and initialize floppy A and B images with real Bochs
         run: |
           PYTHONPATH=src python3 - <<'PY'
@@ -127,6 +158,97 @@ jobs:
                   "Bochs accepted floppy A and B images, initialized BIOS/VGA/IDE, "
                   f"and completed its bounded benchmark (exit status {result.returncode})."
               )
+          PY
+
+      - name: Parse and initialize secondary IDE disk and CD-ROM channel with real Bochs
+        run: |
+          PYTHONPATH=src python3 - <<'PY'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from chromeos_vm.manager import VMManager
+
+          with tempfile.TemporaryDirectory() as temp:
+              manager = VMManager(Path(temp) / "vms")
+              iso = Path(temp) / "install.iso"
+              iso.write_bytes(b"test ISO image")
+              vm = manager.create(
+                  "dual-ide-smoke", memory_mib=128, disk_gib=1,
+                  secondary_disk_gib=1, iso=iso, cdrom_slot="ata1-slave",
+              )
+              assert Path(vm.secondary_disk_path).is_file()
+              config = manager.render_bochsrc(vm)
+              assert "ata0: enabled=1, ioaddr1=0x1f0, ioaddr2=0x3f0, irq=14" in config
+              assert "ata1: enabled=1, ioaddr1=0x170, ioaddr2=0x370, irq=15" in config
+              assert "ata1-master: type=disk" in config
+              assert 'ata1-slave: type=cdrom, path="' + str(iso.resolve()) in config
+              config += "\nspeaker: enabled=0\n"
+              config_path = manager.vm_path(vm.name) / "bochsrc.ide-ci"
+              config_path.write_text(config, encoding="utf-8")
+              result = subprocess.run(
+                  ["xvfb-run", "-a", "env", "SDL_VIDEODRIVER=x11",
+                   "bochs", "-benchmark", "1", "-q", "-f", str(config_path)],
+                  capture_output=True, text=True, timeout=45, check=False,
+              )
+              log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+              log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+              if "cpu loop quit" not in log_text or ">>PANIC<<" in log_text:
+                  raise SystemExit(
+                      "Bochs dual-IDE configuration failed:\n"
+                      + result.stdout[-3000:] + result.stderr[-3000:] + log_text[-8000:]
+                  )
+              print(
+                  "Bochs parsed the explicit primary/secondary IDE channels, "
+                  "accepted the configured secondary disk and CD-ROM slot, and "
+                  f"completed its bounded benchmark (exit status {result.returncode})."
+              )
+          PY
+
+      - name: Parse and initialize BIOS boot-priority sequences with real Bochs
+        run: |
+          PYTHONPATH=src python3 - <<'PY'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          from chromeos_vm.manager import VMManager
+
+          sequences = (
+              ("floppy", "cdrom", "disk"),
+              ("cdrom", "disk"),
+              ("disk",),
+          )
+          with tempfile.TemporaryDirectory() as temp:
+              manager = VMManager(Path(temp) / "vms")
+              for index, order in enumerate(sequences):
+                  iso = Path(temp) / f"boot-{index}.iso"
+                  iso.write_bytes(b"test ISO")
+                  floppy = Path(temp) / f"boot-{index}.img"
+                  floppy.write_bytes(bytes(1_440 * 1024))
+                  vm = manager.create(
+                      f"boot-order-{index}", memory_mib=128, disk_gib=1, iso=iso
+                  )
+                  manager.set_floppy_a(vm.name, floppy)
+                  manager.set_boot_order(vm.name, order)
+                  config = manager.render_bochsrc(manager.load(vm.name))
+                  directive = "boot: " + ", ".join(order)
+                  assert directive in config, (directive, config)
+                  config += "\nspeaker: enabled=0\n"
+                  config_path = manager.vm_path(vm.name) / "bochsrc.boot-ci"
+                  config_path.write_text(config, encoding="utf-8")
+                  log_path = manager.vm_path(vm.name) / "logs/bochs.log"
+                  log_path.unlink(missing_ok=True)
+                  result = subprocess.run(
+                      ["xvfb-run", "-a", "env", "SDL_VIDEODRIVER=x11",
+                       "bochs", "-benchmark", "1", "-q", "-f", str(config_path)],
+                      capture_output=True, text=True, timeout=45, check=False,
+                  )
+                  log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+                  if "cpu loop quit" not in log_text or ">>PANIC<<" in log_text:
+                      raise SystemExit(
+                          f"Bochs rejected boot order {order} (exit {result.returncode}):\n"
+                          + result.stdout[-2500:] + result.stderr[-2500:] + log_text[-6000:]
+                      )
+                  print(f"Bochs initialized BIOS boot order: {', '.join(order)}")
           PY
 
       - name: Parse and initialize each exposed CPU model with real Bochs
@@ -219,7 +341,9 @@ jobs:
           from tkinter import ttk
           from pathlib import Path
           from chromeos_vm.gui import ChromeOSVMStudio
-          from chromeos_vm.manager import CHIPSET_LABELS, VMManager
+          from chromeos_vm.manager import (
+              BOOT_DEVICE_LABELS, CHIPSET_LABELS, IDE_CDROM_SLOT_LABELS, VMManager,
+          )
 
           def descendants(widget):
               for child in widget.winfo_children():
@@ -233,6 +357,15 @@ jobs:
               root.update_idletasks()
               assert root.title() == "ChromeOS VM Studio"
               assert app.table.winfo_exists()
+              button_labels = {
+                  w.cget("text") for w in descendants(root) if isinstance(w, ttk.Button)
+              }
+              assert "Attach second disk…" in button_labels
+              assert "Detach second disk" in button_labels
+              assert "Boot order…" in button_labels
+              assert "Diagnostics…" in button_labels
+              assert "Import backup…" in button_labels
+              assert "Export backup…" in button_labels
 
               # Exercise the actual create dialog and confirm chipset choices
               # are presented by native Tk widgets, not just manager APIs.
@@ -241,6 +374,9 @@ jobs:
               create_dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
               create_combos = [w for w in descendants(create_dialog) if isinstance(w, ttk.Combobox)]
               assert any(set(CHIPSET_LABELS.values()).issubset(set(w.cget("values"))) for w in create_combos)
+              assert any(set(IDE_CDROM_SLOT_LABELS.values()).issubset(set(w.cget("values"))) for w in create_combos)
+              create_toggles = [w for w in descendants(create_dialog) if isinstance(w, ttk.Checkbutton)]
+              assert any("Sound Blaster 16" in w.cget("text") for w in create_toggles)
               create_dialog.destroy()
 
               manager.create("dos-test", memory_mib=128, disk_gib=1)
@@ -250,13 +386,64 @@ jobs:
               assert app.table.tag_has("stopped", "dos-test")
               app.table.selection_set("dos-test")
 
+              app.show_diagnostics()
+              root.update()
+              diagnostics_dialog = next(
+                  w for w in root.winfo_children()
+                  if isinstance(w, tk.Toplevel) and "Diagnostics" in w.title()
+              )
+              diagnostic_text = [
+                  w for w in descendants(diagnostics_dialog) if isinstance(w, tk.Text)
+              ]
+              assert diagnostic_text
+              assert "Primary disk: OK" in diagnostic_text[0].get("1.0", "end")
+              diagnostics_dialog.destroy()
+
               # Exercise the edit dialog too, so profile changes remain reachable.
               app.edit_vm()
               root.update()
               edit_dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
               edit_combos = [w for w in descendants(edit_dialog) if isinstance(w, ttk.Combobox)]
               assert any(set(CHIPSET_LABELS.values()).issubset(set(w.cget("values"))) for w in edit_combos)
+              assert any(set(IDE_CDROM_SLOT_LABELS.values()).issubset(set(w.cget("values"))) for w in edit_combos)
+              sound_toggle = next(
+                  w for w in descendants(edit_dialog)
+                  if isinstance(w, ttk.Checkbutton) and "Sound Blaster 16" in w.cget("text")
+              )
+              sound_toggle.invoke()
+              next(
+                  w for w in descendants(edit_dialog)
+                  if isinstance(w, ttk.Button) and w.cget("text") == "Save changes"
+              ).invoke()
+              root.update()
+              assert manager.load("dos-test").sound_enabled
               edit_dialog.destroy()
+
+              # Exercise the native three-position BIOS boot-order editor.
+              app.edit_boot_order()
+              root.update()
+              boot_dialog = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+              boot_combos = [w for w in descendants(boot_dialog) if isinstance(w, ttk.Combobox)]
+              assert len(boot_combos) == 3
+              boot_choices = set(boot_combos[0].cget("values"))
+              assert BOOT_DEVICE_LABELS["disk"] in boot_choices
+              assert BOOT_DEVICE_LABELS["network"] in boot_choices
+              assert BOOT_DEVICE_LABELS["floppy"] not in boot_choices
+              assert BOOT_DEVICE_LABELS["cdrom"] not in boot_choices
+              automatic_toggle = next(
+                  w for w in descendants(boot_dialog)
+                  if isinstance(w, ttk.Checkbutton) and w.cget("text").startswith("Automatic")
+              )
+              automatic_toggle.invoke()
+              root.update()
+              boot_combos[0].set(BOOT_DEVICE_LABELS["disk"])
+              save_button = next(
+                  w for w in descendants(boot_dialog)
+                  if isinstance(w, ttk.Button) and w.cget("text") == "Save boot order"
+              )
+              save_button.invoke()
+              root.update()
+              assert manager.load("dos-test").boot_order == ("disk",)
               root.destroy()
-          print("Native Tk GUI and PCI chipset dialog smoke test passed.")
+          print("Native Tk GUI, IDE storage, BIOS boot-priority, and backup/restore controls smoke test passed.")
           PY

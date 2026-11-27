@@ -4,7 +4,17 @@ import argparse
 import sys
 from pathlib import Path
 from . import __version__
-from .manager import CHIPSET_LABELS, CPU_MODEL_LABELS, VMError, VMManager
+from .backup import clone_vm, export_vm, import_vm
+from .manager import (
+    CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS, VMError, VMManager,
+)
+
+
+def parse_boot_order(value: str) -> tuple[str, ...] | None:
+    """Parse 'auto' or a comma-separated Bochs boot-device sequence."""
+    if value.strip().lower() == "auto":
+        return None
+    return tuple(part.strip().lower() for part in value.split(","))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,10 +35,40 @@ def build_parser() -> argparse.ArgumentParser:
                         help="pre-defined Bochs x86 CPU model")
     create.add_argument("--chipset", choices=tuple(CHIPSET_LABELS), default="i440fx",
                         help="Bochs PCI chipset (i430fx, i440fx, or i440bx)")
+    create.add_argument("--secondary-disk-gib", type=int,
+                        help="optional second sparse IDE hard disk size")
+    create.add_argument("--cdrom-slot", choices=tuple(IDE_CDROM_SLOT_LABELS),
+                        default="ata0-slave", help="IDE slave position for the CD-ROM")
+    create.add_argument(
+        "--boot-order", type=parse_boot_order, default=None,
+        help="BIOS boot order: auto or comma-separated floppy,cdrom,disk,network",
+    )
+    create.add_argument("--sound", action="store_true",
+                        help="enable emulated Sound Blaster 16 and PC speaker audio output")
     create.add_argument("--iso", type=Path)
+    boot_order = cmds.add_parser("set-boot-order", help="set or restore a VM's BIOS boot priority")
+    boot_order.add_argument("name")
+    boot_order.add_argument("--order", type=parse_boot_order, required=True,
+                            help="auto or comma-separated floppy,cdrom,disk,network")
+    attach_disk = cmds.add_parser("attach-disk", help="create or reattach the private secondary IDE disk")
+    attach_disk.add_argument("name")
+    attach_disk.add_argument("--disk-gib", type=int, default=8)
+    detach_disk = cmds.add_parser("detach-disk", help="detach the secondary disk without deleting its data")
+    detach_disk.add_argument("name")
     for command in ("start", "stop", "info"):
         sub = cmds.add_parser(command)
         sub.add_argument("name")
+    diagnose = cmds.add_parser("diagnose", help="run read-only VM health checks")
+    diagnose.add_argument("name")
+    export = cmds.add_parser("export", help="export a stopped VM and its managed disks to a ZIP backup")
+    export.add_argument("name")
+    export.add_argument("destination", type=Path)
+    restore = cmds.add_parser("import", help="restore a VM from a ChromeOS VM Studio ZIP backup")
+    restore.add_argument("source", type=Path)
+    restore.add_argument("--name", help="optional new VM name; the original name is used by default")
+    clone = cmds.add_parser("clone", help="clone a stopped VM into an independent VM")
+    clone.add_argument("source", help="name of the existing source VM")
+    clone.add_argument("name", help="new name for the cloned VM")
     cmds.add_parser("list", help="list virtual machines")
     delete = cmds.add_parser("delete", help="delete a stopped VM and its disk")
     delete.add_argument("name")
@@ -64,25 +104,74 @@ def main(argv: list[str] | None = None) -> int:
             cfg = manager.create(
                 args.name, args.memory_mib, args.disk_gib, args.cpu_ips, args.iso,
                 cpu_model=args.cpu_model, chipset=args.chipset,
+                secondary_disk_gib=args.secondary_disk_gib,
+                cdrom_slot=args.cdrom_slot,
+                boot_order=args.boot_order,
+                sound_enabled=args.sound,
+            )
+            second = (
+                f" plus a {cfg.secondary_disk_gib} GiB IDE1-master disk"
+                if cfg.secondary_disk_gib is not None else ""
             )
             print(
-                f"Created {cfg.name} with a {cfg.disk_gib} GiB sparse disk, "
-                f"CPU model {cfg.cpu_model}, and {cfg.chipset} chipset."
+                f"Created {cfg.name} with a {cfg.disk_gib} GiB primary sparse disk{second}, "
+                f"CPU model {cfg.cpu_model}, {cfg.chipset} chipset, "
+                f"and CD-ROM position {cfg.cdrom_slot}. "
+                f"Audio: {'SB16/PC speaker enabled' if cfg.sound_enabled else 'disabled'}. "
+                f"BIOS boot order: {', '.join(cfg.boot_order) if cfg.boot_order else 'automatic'}."
             )
         elif args.command == "list":
             for cfg in manager.list_vms():
                 status = "running" if manager.is_running(cfg.name) else "stopped"
-                print(f"{cfg.name}: {status}, {cfg.memory_mib} MiB RAM, {cfg.disk_gib} GiB disk")
+                disk_summary = f"{cfg.disk_gib} GiB primary disk"
+                if cfg.secondary_disk_gib is not None:
+                    disk_summary += f" + {cfg.secondary_disk_gib} GiB secondary disk"
+                print(f"{cfg.name}: {status}, {cfg.memory_mib} MiB RAM, {disk_summary}")
+        elif args.command == "diagnose":
+            print(manager.diagnostic_report(args.name))
+        elif args.command == "clone":
+            cfg = clone_vm(manager, args.source, args.name)
+            print(
+                f"Cloned {args.source} as {cfg.name}. Primary and managed secondary disks are independent; "
+                "external ISO/floppy media remain shared at their saved paths. "
+                "Custom Bochs config, logs, and runtime state were not copied."
+            )
+        elif args.command == "export":
+            backup = export_vm(manager, args.name, args.destination)
+            print(
+                f"Exported {args.name} to {backup}. Managed virtual disks are included; "
+                "ISO/floppy media remain external, and custom Bochs config, logs, and runtime state are not included."
+            )
+        elif args.command == "import":
+            cfg = import_vm(manager, args.source, args.name)
+            print(
+                f"Restored {cfg.name}. Managed virtual disks were copied into the private VM folder. "
+                "ISO/floppy paths remain external and must still be available; custom Bochs config was not restored."
+            )
         elif args.command == "info":
             cfg = manager.load(args.name)
             print(
                 f"Name: {cfg.name}\nBackend: {cfg.backend}\n"
                 f"State: {'running' if manager.is_running(cfg.name) else 'stopped'}\n"
                 f"RAM: {cfg.memory_mib} MiB\nCPU model: {cfg.cpu_model}\n"
-                f"Chipset: {cfg.chipset}\nCPU IPS: {cfg.cpu_ips:,}\nDisk: {cfg.disk_path}\n"
+                f"Chipset: {cfg.chipset}\nSound: {'SB16/PC speaker enabled' if cfg.sound_enabled else 'disabled'}\nCPU IPS: {cfg.cpu_ips:,}\n"
+                f"Primary disk: {cfg.disk_path}\n"
+                f"Secondary disk: {cfg.secondary_disk_path or 'not attached'}\n"
+                f"CD-ROM IDE position: {cfg.cdrom_slot}\n"
+                f"BIOS boot order: {', '.join(cfg.boot_order) if cfg.boot_order else 'automatic (media-aware)'}\n"
                 f"ISO: {cfg.iso_path or 'not attached'}\n"
                 f"Config: {manager.vm_path(cfg.name) / 'bochsrc'}"
             )
+        elif args.command == "attach-disk":
+            cfg = manager.attach_secondary_disk(args.name, args.disk_gib)
+            print(f"Attached {cfg.secondary_disk_gib} GiB disk at IDE1 master for {cfg.name}.")
+        elif args.command == "detach-disk":
+            path = manager.detach_secondary_disk(args.name)
+            print(f"Detached {path.name}; disk data remains in the VM folder.")
+        elif args.command == "set-boot-order":
+            cfg = manager.set_boot_order(args.name, args.order)
+            order = ", ".join(cfg.boot_order) if cfg.boot_order else "automatic (media-aware)"
+            print(f"BIOS boot order for {cfg.name}: {order}")
         elif args.command == "start":
             print(f"Started {args.name}; Bochs PID {manager.start(args.name)}")
         elif args.command == "stop":

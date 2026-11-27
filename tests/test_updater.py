@@ -29,6 +29,17 @@ def make_archive(entries):
     return output.getvalue()
 
 
+def make_special_archive(name, file_type, linkname=""):
+    """Build a tiny tar containing a non-regular entry without extracting it."""
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        info = tarfile.TarInfo(name)
+        info.type = file_type
+        info.linkname = linkname
+        archive.addfile(info)
+    return output.getvalue()
+
+
 class SafeExtractTests(unittest.TestCase):
     def test_extracts_regular_project_files(self):
         payload = make_archive([
@@ -57,6 +68,51 @@ class SafeExtractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             with self.assertRaises(updater.UpdateError):
                 updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_hard_links_and_special_files(self):
+        for file_type in (tarfile.LNKTYPE, tarfile.FIFOTYPE, tarfile.CHRTYPE, tarfile.BLKTYPE):
+            with self.subTest(file_type=file_type):
+                payload = make_special_archive(
+                    "project/special", file_type, "project/target"
+                )
+                with tempfile.TemporaryDirectory() as temp:
+                    with self.assertRaises(updater.UpdateError):
+                        updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_absolute_paths(self):
+        payload = make_archive([("/tmp/chromeos-vm-escape", "bad")])
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(updater.UpdateError):
+                updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_multiple_archive_roots(self):
+        payload = make_archive([
+            ("project/pyproject.toml", "[project]"),
+            ("unexpected/file.txt", "not part of this archive"),
+        ])
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaisesRegex(updater.UpdateError, "one repository root"):
+                updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_archive_member_count_over_limit(self):
+        payload = make_archive([
+            ("project/a.txt", "a"),
+            ("project/b.txt", "b"),
+            ("project/c.txt", "c"),
+        ])
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(updater, "MAX_ARCHIVE_FILES", 2):
+                with self.assertRaisesRegex(updater.UpdateError, "number of entries"):
+                    updater._safe_extract(payload, Path(temp))
+
+    def test_rejects_extracted_size_over_limit_before_writing(self):
+        payload = make_archive([("project/large.txt", "123456789")])
+        with tempfile.TemporaryDirectory() as temp:
+            dest = Path(temp)
+            with patch.object(updater, "MAX_EXTRACTED_BYTES", 8):
+                with self.assertRaisesRegex(updater.UpdateError, "extraction safety limits"):
+                    updater._safe_extract(payload, dest)
+            self.assertFalse((dest / "large.txt").exists())
 
 
 class UpdateFlowTests(unittest.TestCase):
@@ -103,23 +159,70 @@ class UpdateFlowTests(unittest.TestCase):
             self.assertEqual(result.status, "current")
             apply.assert_not_called()
 
+    def test_apply_update_refuses_an_older_package_version_before_pip(self):
+        sha = "d" * 40
+        payload = make_archive([
+            ("project/", None),
+            ("project/pyproject.toml",
+             "[project]\nname='chromeos-vm-studio'\nversion='0.3.7'\n"),
+            ("project/src/", None),
+            ("project/src/chromeos_vm/", None),
+        ])
+        with patch.object(updater, "INSTALLED_VERSION", "0.3.10"), \
+             patch.object(updater, "_request", return_value=payload), \
+             patch.object(updater.subprocess, "run") as install:
+            with self.assertRaisesRegex(
+                updater.DowngradePrevented, "from 0.3.10 to 0.3.7"
+            ):
+                updater.apply_update(sha)
+        install.assert_not_called()
+
+    def test_downgrade_refusal_keeps_the_installed_commit_marker(self):
+        old = "c" * 40
+        new = "d" * 40
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / "install.json"
+            marker.write_text(json.dumps({"commit": old}))
+            with patch.object(updater, "metadata_path", return_value=marker), \
+                 patch.object(updater, "latest_commit", return_value=new), \
+                 patch.object(
+                     updater, "apply_update",
+                     side_effect=updater.DowngradePrevented("refusing older release"),
+                 ) as apply:
+                result = updater.check_for_updates(force=True)
+            self.assertEqual(result.status, "current")
+            self.assertIn("refusing older release", result.message)
+            apply.assert_called_once_with(new)
+            saved = json.loads(marker.read_text())
+            self.assertEqual(saved["commit"], old)
+            self.assertIn("last_check", saved)
+
     def test_app_update_leaves_vm_profiles_and_disks_untouched(self):
         sha = "f" * 40
         payload = make_archive([
             ("project/", None),
-            ("project/pyproject.toml", "[project]\nname='chromeos-vm-studio'\n"),
+            ("project/pyproject.toml",
+             "[project]\nname='chromeos-vm-studio'\nversion='0.3.10'\n"),
             ("project/src/", None),
             ("project/src/chromeos_vm/", None),
-            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.7'\n"),
+            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.10'\n"),
         ])
         with tempfile.TemporaryDirectory() as temp:
             vm_dir = Path(temp) / "vms" / "dos-test"
             vm_dir.mkdir(parents=True)
             disk = vm_dir / "disk.raw"
+            secondary = vm_dir / "disk2.raw"
             profile = vm_dir / "vm.json"
             disk.write_bytes(b"guest disk data must survive")
-            profile.write_text('{"name":"dos-test","cpu_model":"pentium","chipset":"i440bx"}\n', encoding="utf-8")
+            secondary.write_bytes(b"secondary guest disk data must survive")
+            profile.write_text(
+                '{"name":"dos-test","cpu_model":"pentium","chipset":"i440bx",'
+                '"secondary_disk_gib":4,"secondary_disk_path":"' + str(secondary) + '",'
+                '"cdrom_slot":"ata1-slave","boot_order":["cdrom","disk"]}\n',
+                encoding="utf-8",
+            )
             disk_before = disk.read_bytes()
+            secondary_before = secondary.read_bytes()
             profile_before = profile.read_bytes()
 
             fake_result = type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
@@ -130,6 +233,7 @@ class UpdateFlowTests(unittest.TestCase):
             install.assert_called_once()
             self.assertIn("pip", install.call_args.args[0])
             self.assertEqual(disk.read_bytes(), disk_before)
+            self.assertEqual(secondary.read_bytes(), secondary_before)
             self.assertEqual(profile.read_bytes(), profile_before)
 
     def test_failed_install_does_not_advance_marker(self):

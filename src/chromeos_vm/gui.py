@@ -4,10 +4,14 @@ from __future__ import annotations
 import subprocess
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
 
-from .manager import CHIPSET_LABELS, CPU_MODEL_LABELS, VMError, VMManager
+from .backup import clone_vm, export_vm, import_vm
+from .manager import (
+    BOOT_DEVICE_LABELS, CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS,
+    VMError, VMManager, default_boot_order,
+)
 from .updater import UpdateResult, check_for_updates
 
 
@@ -100,6 +104,8 @@ class ChromeOSVMStudio:
         ttk.Label(section, text="VIRTUAL MACHINES",
                   background="#eef2f7", foreground="#334155",
                   font=("TkDefaultFont", 10, "bold")).pack(side="left")
+        ttk.Button(section, text="Diagnostics…", style="Action.TButton",
+                   command=self.show_diagnostics).pack(side="right", padx=(8, 0))
         ttk.Label(section, text="Select a machine to manage its power and media",
                   style="App.TLabel").pack(side="right")
 
@@ -138,12 +144,15 @@ class ChromeOSVMStudio:
         self.table.bind("<Double-1>", lambda _event: self.start_vm())
 
         action_panel = ttk.Frame(content, style="Panel.TFrame", padding=13, width=190)
+        self.action_panel = action_panel
         action_panel.pack(side="right", fill="y", padx=(12, 0))
         action_panel.pack_propagate(False)
         ttk.Label(action_panel, text="ACTIONS", style="PanelTitle.TLabel").pack(anchor="w", pady=(0, 10))
 
         ttk.Button(action_panel, text="＋  New VM", style="Primary.TButton",
                    command=self.new_vm).pack(fill="x", pady=(0, 7))
+        ttk.Button(action_panel, text="Import backup…", style="Action.TButton",
+                   command=self.import_backup).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="▶  Boot", style="Accent.TButton",
                    command=self.start_vm).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="■  Stop", style="Action.TButton",
@@ -154,6 +163,10 @@ class ChromeOSVMStudio:
                   style="PanelHint.TLabel").pack(anchor="w", pady=(0, 5))
         ttk.Button(action_panel, text="Attach ISO…", style="Action.TButton",
                    command=self.attach_iso).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Attach second disk…", style="Action.TButton",
+                   command=self.attach_secondary_disk).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Detach second disk", style="Action.TButton",
+                   command=self.detach_secondary_disk).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Attach floppy A…", style="Action.TButton",
                    command=self.attach_floppy_a).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Eject floppy A", style="Action.TButton",
@@ -162,11 +175,17 @@ class ChromeOSVMStudio:
                    command=self.attach_floppy_b).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Eject floppy B", style="Action.TButton",
                    command=self.eject_floppy_b).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Boot order…", style="Action.TButton",
+                   command=self.edit_boot_order).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Edit VM…", style="Action.TButton",
                    command=self.edit_vm).pack(fill="x", pady=3)
         self.config_button = ttk.Button(action_panel, text="Bochs config…", style="Action.TButton",
                                          command=self.edit_bochs_config)
         self.config_button.pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Export backup…", style="Action.TButton",
+                   command=self.export_backup).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Clone VM…", style="Action.TButton",
+                   command=self.clone_selected_vm).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Open folder", style="Action.TButton",
                    command=self.open_folder).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="View logs", style="Action.TButton",
@@ -253,8 +272,11 @@ class ChromeOSVMStudio:
                 if cfg.floppy_b_path:
                     media_items.append("B: " + Path(cfg.floppy_b_path).name)
                 media = " · ".join(media_items) if media_items else "None"
+                disk_label = f"{cfg.disk_gib} GiB"
+                if cfg.secondary_disk_gib is not None:
+                    disk_label += f" + {cfg.secondary_disk_gib} GiB"
                 self.table.insert("", "end", iid=cfg.name, text=cfg.name,
-                                  values=(state, f"{cfg.memory_mib} MiB", f"{cfg.disk_gib} GiB", media),
+                                  values=(state, f"{cfg.memory_mib} MiB", disk_label, media),
                                   tags=("running" if running else "stopped",))
             if selected and self.table.exists(selected):
                 self.table.selection_set(selected)
@@ -277,14 +299,18 @@ class ChromeOSVMStudio:
         name = tk.StringVar()
         ram = tk.StringVar(value="512")
         disk = tk.StringVar(value="8")
+        secondary_disk = tk.StringVar()
         iso = tk.StringVar()
         cpu_model = tk.StringVar(value=CPU_MODEL_LABELS["default"])
         chipset = tk.StringVar(value=CHIPSET_LABELS["i440fx"])
+        cdrom_slot = tk.StringVar(value=IDE_CDROM_SLOT_LABELS["ata0-slave"])
+        sound_enabled = tk.BooleanVar(value=False)
+
         ttk.Label(frame, text="Name").grid(row=0, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=name, width=34).grid(row=0, column=1, sticky="ew", pady=5)
         ttk.Label(frame, text="RAM (MiB)").grid(row=1, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=ram, width=34).grid(row=1, column=1, sticky="ew", pady=5)
-        ttk.Label(frame, text="Disk (GiB)").grid(row=2, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="Primary disk (GiB)").grid(row=2, column=0, sticky="w", pady=5)
         ttk.Entry(frame, textvariable=disk, width=34).grid(row=2, column=1, sticky="ew", pady=5)
         ttk.Label(frame, text="CPU model").grid(row=3, column=0, sticky="w", pady=5)
         ttk.Combobox(frame, textvariable=cpu_model, state="readonly",
@@ -294,18 +320,31 @@ class ChromeOSVMStudio:
         ttk.Combobox(frame, textvariable=chipset, state="readonly",
                      values=tuple(CHIPSET_LABELS.values()), width=40).grid(
                          row=4, column=1, sticky="ew", pady=5)
-        ttk.Label(frame, text="Install ISO").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Label(frame, text="CD-ROM IDE position").grid(row=5, column=0, sticky="w", pady=5)
+        ttk.Combobox(frame, textvariable=cdrom_slot, state="readonly",
+                     values=tuple(IDE_CDROM_SLOT_LABELS.values()), width=40).grid(
+                         row=5, column=1, sticky="ew", pady=5)
+        ttk.Label(frame, text="Second disk (GiB, optional)").grid(row=6, column=0, sticky="w", pady=5)
+        ttk.Entry(frame, textvariable=secondary_disk, width=34).grid(
+            row=6, column=1, sticky="ew", pady=5)
+        ttk.Label(frame, text="Install ISO").grid(row=7, column=0, sticky="w", pady=5)
         iso_row = ttk.Frame(frame)
-        iso_row.grid(row=5, column=1, sticky="ew", pady=5)
+        iso_row.grid(row=7, column=1, sticky="ew", pady=5)
         ttk.Entry(iso_row, textvariable=iso, width=25).pack(side="left", fill="x", expand=True)
         ttk.Button(iso_row, text="Browse…", command=lambda: iso.set(filedialog.askopenfilename(
             parent=dialog, filetypes=[("Disk images", "*.iso *.img *.ima"), ("All files", "*")]))).pack(side="left", padx=(5, 0))
+        ttk.Checkbutton(
+            frame, text="Enable Sound Blaster 16 / PC speaker audio (SDL output)",
+            variable=sound_enabled,
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(5, 4))
         ttk.Label(
             frame,
-            text=("CPU model and PCI chipset control guest-visible hardware, not emulation speed. "
-                  "Model and chipset availability depend on the installed Bochs build."),
-            foreground="#666", wraplength=440,
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(5, 10))
+            text=("The second hard disk is created as IDE channel 1 master. "
+                  "The CD-ROM can use the slave position on IDE channel 0 or 1. "
+                  "CPU and chipset selections change guest-visible hardware, not host speed. "
+                  "Audio is optional and may depend on Crostini SDL audio support."),
+            foreground="#666", wraplength=500,
+        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(5, 10))
 
         def create() -> None:
             try:
@@ -315,10 +354,15 @@ class ChromeOSVMStudio:
                 selected_chipset = next(
                     key for key, label in CHIPSET_LABELS.items() if label == chipset.get()
                 )
+                selected_cdrom_slot = next(
+                    key for key, label in IDE_CDROM_SLOT_LABELS.items() if label == cdrom_slot.get()
+                )
+                secondary_size = int(secondary_disk.get()) if secondary_disk.get().strip() else None
                 cfg = self.manager.create(
                     name.get().strip(), int(ram.get()), int(disk.get()),
                     iso=iso.get().strip() or None, cpu_model=selected_model,
-                    chipset=selected_chipset,
+                    chipset=selected_chipset, secondary_disk_gib=secondary_size,
+                    cdrom_slot=selected_cdrom_slot, sound_enabled=sound_enabled.get(),
                 )
                 dialog.destroy()
                 self.refresh()
@@ -328,7 +372,7 @@ class ChromeOSVMStudio:
                 messagebox.showerror("Could not create VM", str(exc), parent=dialog)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=7, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=10, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Create", command=create).pack(side="right")
         frame.columnconfigure(1, weight=1)
@@ -360,7 +404,7 @@ class ChromeOSVMStudio:
             messagebox.showerror("Could not stop VM", str(exc), parent=self.root)
 
     def edit_vm(self) -> None:
-        """Edit a stopped VM's memory, CPU model, PCI chipset, and CD/DVD media."""
+        """Edit a stopped VM's CPU, chipset, CD-ROM IDE position and media."""
         name = self.selected_name()
         if not name:
             self._status("Select a virtual machine first.")
@@ -381,6 +425,8 @@ class ChromeOSVMStudio:
         cpu = tk.StringVar(value=str(cfg.cpu_ips))
         cpu_model = tk.StringVar(value=CPU_MODEL_LABELS[cfg.cpu_model])
         chipset = tk.StringVar(value=CHIPSET_LABELS[cfg.chipset])
+        cdrom_slot = tk.StringVar(value=IDE_CDROM_SLOT_LABELS[cfg.cdrom_slot])
+        sound_enabled = tk.BooleanVar(value=cfg.sound_enabled)
         iso = tk.StringVar(value=cfg.iso_path or "")
 
         ttk.Label(frame, text="Memory (MiB)").grid(row=0, column=0, sticky="w", pady=6)
@@ -395,21 +441,34 @@ class ChromeOSVMStudio:
         ttk.Combobox(frame, textvariable=chipset, state="readonly",
                      values=tuple(CHIPSET_LABELS.values()), width=40).grid(
                          row=3, column=1, sticky="ew", pady=6)
-        ttk.Label(frame, text="CD/DVD image").grid(row=4, column=0, sticky="w", pady=6)
+        ttk.Label(frame, text="CD-ROM IDE position").grid(row=4, column=0, sticky="w", pady=6)
+        ttk.Combobox(frame, textvariable=cdrom_slot, state="readonly",
+                     values=tuple(IDE_CDROM_SLOT_LABELS.values()), width=40).grid(
+                         row=4, column=1, sticky="ew", pady=6)
+        ttk.Label(frame, text="CD/DVD image").grid(row=5, column=0, sticky="w", pady=6)
         media_row = ttk.Frame(frame)
-        media_row.grid(row=4, column=1, sticky="ew", pady=6)
+        media_row.grid(row=5, column=1, sticky="ew", pady=6)
         ttk.Entry(media_row, textvariable=iso, width=34).pack(side="left", fill="x", expand=True)
         ttk.Button(media_row, text="Browse…", command=lambda: iso.set(
             filedialog.askopenfilename(parent=dialog,
                 filetypes=[("Disk images", "*.iso *.img *.ima"), ("All files", "*")])
             or iso.get())).pack(side="left", padx=(5, 0))
         ttk.Button(media_row, text="Eject ISO", command=lambda: iso.set("")).pack(side="left", padx=(5, 0))
+        secondary_text = (
+            f"Secondary IDE disk: {cfg.secondary_disk_gib} GiB (IDE1 master)"
+            if cfg.secondary_disk_gib is not None else "Secondary IDE disk: not attached"
+        )
+        ttk.Checkbutton(
+            frame, text="Enable Sound Blaster 16 / PC speaker audio (SDL output)",
+            variable=sound_enabled,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 4))
         ttk.Label(
             frame,
-            text=(f"Virtual disk: {cfg.disk_gib} GiB (disk resizing is not supported yet). "
-                  "CPU model and PCI chipset support depend on the installed Bochs build."),
-            foreground="#666", wraplength=500,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 12))
+            text=(f"Primary disk: {cfg.disk_gib} GiB. {secondary_text}. "
+                  "Detaching a secondary disk preserves disk2.raw in the VM folder. "
+                  "Audio output depends on the Bochs build and Crostini SDL audio integration."),
+            foreground="#666", wraplength=520,
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(6, 12))
 
         def save() -> None:
             try:
@@ -419,9 +478,13 @@ class ChromeOSVMStudio:
                 selected_chipset = next(
                     key for key, label in CHIPSET_LABELS.items() if label == chipset.get()
                 )
+                selected_cdrom_slot = next(
+                    key for key, label in IDE_CDROM_SLOT_LABELS.items() if label == cdrom_slot.get()
+                )
                 self.manager.update_profile(
                     name, int(ram.get()), int(cpu.get()), iso.get().strip() or None,
-                    selected_model, selected_chipset,
+                    selected_model, selected_chipset, selected_cdrom_slot,
+                    sound_enabled.get(),
                 )
                 dialog.destroy()
                 self.refresh()
@@ -430,10 +493,141 @@ class ChromeOSVMStudio:
                 messagebox.showerror("Could not save VM", str(exc), parent=dialog)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=6, column=0, columnspan=2, sticky="e")
+        buttons.grid(row=8, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right", padx=(5, 0))
         ttk.Button(buttons, text="Save changes", command=save).pack(side="right")
         frame.columnconfigure(1, weight=1)
+
+    def edit_boot_order(self) -> None:
+        """Edit the BIOS boot sequence using only devices attached to this VM."""
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        try:
+            cfg = self.manager.load(name)
+            if self.manager.is_running(name):
+                messagebox.showinfo(
+                    "Stop the VM first",
+                    "BIOS boot priority can only be changed while this VM is stopped.",
+                    parent=self.root,
+                )
+                return
+            if self.manager.custom_bochsrc_path(name).exists():
+                messagebox.showinfo(
+                    "Restore generated configuration",
+                    "The custom Bochs configuration currently controls the boot directive. "
+                    "Restore the generated configuration before editing BIOS boot priority.",
+                    parent=self.root,
+                )
+                return
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not edit boot order", str(exc), parent=self.root)
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"{name} — BIOS boot priority")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill="both", expand=True)
+
+        available = []
+        if cfg.floppy_a_path:
+            available.append("floppy")
+        if cfg.iso_path:
+            available.append("cdrom")
+        available.extend(("disk", "network"))
+        unused = "— not used —"
+        choices = (unused,) + tuple(BOOT_DEVICE_LABELS[item] for item in available)
+        reverse = {label: key for key, label in BOOT_DEVICE_LABELS.items()}
+        automatic = tk.BooleanVar(value=cfg.boot_order is None)
+        current = cfg.boot_order or default_boot_order(cfg)
+        values = [
+            tk.StringVar(value=BOOT_DEVICE_LABELS.get(current[index], unused)
+                         if index < len(current) else unused)
+            for index in range(3)
+        ]
+
+        ttk.Label(
+            frame, text="Choose up to three BIOS boot devices, in priority order.",
+            font=("TkDefaultFont", 11, "bold"),
+        ).pack(anchor="w", pady=(0, 8))
+        ttk.Checkbutton(
+            frame,
+            text="Automatic (Floppy A, CD/DVD, then hard disk when attached)",
+            variable=automatic,
+            command=lambda: set_editor_state(),
+        ).pack(anchor="w", pady=(0, 10))
+
+        selectors = ttk.Frame(frame)
+        selectors.pack(fill="x")
+        combos = []
+        for index, variable in enumerate(values, start=1):
+            ttk.Label(selectors, text=f"Priority {index}").grid(
+                row=index - 1, column=0, sticky="w", padx=(0, 12), pady=4
+            )
+            combo = ttk.Combobox(
+                selectors, textvariable=variable, state="readonly",
+                values=choices, width=58,
+            )
+            combo.grid(row=index - 1, column=1, sticky="ew", pady=4)
+            combos.append(combo)
+        selectors.columnconfigure(1, weight=1)
+
+        ttk.Label(
+            frame,
+            text=("Floppy boot requires an image in drive A; CD/DVD boot requires an attached ISO. "
+                  "Network boot is passed to Bochs' boot ROM and also requires a compatible NIC/boot ROM. "
+                  "This manager does not configure a network adapter yet."),
+            foreground="#666", wraplength=560,
+        ).pack(anchor="w", pady=(10, 12))
+
+        def set_editor_state() -> None:
+            state = "disabled" if automatic.get() else "readonly"
+            for combo in combos:
+                combo.configure(state=state)
+
+        def save() -> None:
+            if automatic.get():
+                selected_order = None
+            else:
+                selected_labels = [variable.get() for variable in values]
+                used = [label != unused for label in selected_labels]
+                if any(used[index] and not all(used[:index]) for index in range(3)):
+                    messagebox.showerror(
+                        "Invalid boot order",
+                        "Fill priorities from 1 downward without gaps.",
+                        parent=dialog,
+                    )
+                    return
+                selected_order = tuple(
+                    reverse[label] for label, is_used in zip(selected_labels, used) if is_used
+                )
+                if not selected_order:
+                    messagebox.showerror(
+                        "Invalid boot order", "Choose at least one boot device or enable Automatic.",
+                        parent=dialog,
+                    )
+                    return
+            try:
+                self.manager.set_boot_order(name, selected_order)
+            except (VMError, OSError) as exc:
+                messagebox.showerror("Could not save boot order", str(exc), parent=dialog)
+                return
+            dialog.destroy()
+            self.refresh()
+            if selected_order is None:
+                self._status(f"Restored automatic BIOS boot priority for {name}.")
+            else:
+                self._status(f"Saved BIOS boot order for {name}: " + ", ".join(selected_order) + ".")
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(6, 0))
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="right")
+        ttk.Button(buttons, text="Save boot order", style="Primary.TButton",
+                   command=save).pack(side="right", padx=(0, 6))
+        set_editor_state()
 
     def edit_bochs_config(self) -> None:
         """Edit a stopped VM's custom bochsrc; generated settings remain recoverable."""
@@ -624,6 +818,227 @@ class ChromeOSVMStudio:
         except (VMError, OSError) as exc:
             messagebox.showerror("Could not eject floppy image", str(exc), parent=self.root)
 
+    def attach_secondary_disk(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        size = simpledialog.askinteger(
+            "Attach secondary IDE disk",
+            "Create or reattach the private IDE1-master disk (GiB):",
+            initialvalue=8, minvalue=1, maxvalue=512, parent=self.root,
+        )
+        if size is None:
+            return
+        try:
+            self.manager.attach_secondary_disk(name, size)
+            self.refresh()
+            self._status(
+                f"Attached a {size} GiB secondary disk to {name} as IDE1 master. "
+                "Any existing detached disk image was preserved."
+            )
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not attach secondary disk", str(exc), parent=self.root)
+
+    def detach_secondary_disk(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        if not messagebox.askyesno(
+            "Detach secondary IDE disk",
+            "Detach the secondary disk from the guest? Its disk2.raw file and all data "
+            "will remain in the VM folder so it can be reattached later.",
+            parent=self.root,
+        ):
+            return
+        try:
+            disk = self.manager.detach_secondary_disk(name)
+            self.refresh()
+            self._status(f"Detached {disk.name}; its data was preserved.")
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not detach secondary disk", str(exc), parent=self.root)
+
+    def _set_backup_busy(self, busy: bool) -> None:
+        self._backup_task_active = busy
+
+        def update_buttons(parent) -> None:
+            for child in parent.winfo_children():
+                if isinstance(child, ttk.Button):
+                    child.state(["disabled"] if busy else ["!disabled"])
+                update_buttons(child)
+
+        update_buttons(self.action_panel)
+
+    def export_backup(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self.root,
+            title=f"Export {name} backup",
+            initialfile=f"{name}.cvms.zip",
+            defaultextension=".zip",
+            filetypes=[("ChromeOS VM Studio backups", "*.zip"), ("All files", "*")],
+        )
+        if not destination:
+            return
+        if getattr(self, "_backup_task_active", False):
+            self._status("A backup or restore operation is already running.")
+            return
+        self._set_backup_busy(True)
+        self._status(f"Exporting {name}; large virtual disks may take some time…")
+
+        def worker() -> None:
+            try:
+                result = export_vm(self.manager, name, destination)
+                error = None
+            except Exception as exc:
+                result = None
+                error = exc
+
+            def finish() -> None:
+                self._set_backup_busy(False)
+                if error is not None:
+                    messagebox.showerror("Backup export failed", str(error), parent=self.root)
+                    self._status("Backup export failed; the original VM was not changed.")
+                    return
+                self._status(f"Backup exported to {result}.")
+                messagebox.showinfo(
+                    "Backup exported",
+                    f"Saved {name} to:\n{result}\n\n"
+                    "The managed virtual disks are included. ISO/floppy images remain at their original external paths. "
+                    "Custom Bochs configuration, logs, and runtime state are not included.",
+                    parent=self.root,
+                )
+
+            try:
+                self.root.after(0, finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="vm-studio-export", daemon=True).start()
+
+    def clone_selected_vm(self) -> None:
+        """Clone the selected stopped VM without blocking Tk during disk copying."""
+        source_name = self.selected_name()
+        if not source_name:
+            self._status("Select a virtual machine first.")
+            return
+        target_name = simpledialog.askstring(
+            "Clone virtual machine",
+            f"New name for the copy of {source_name}:",
+            initialvalue=f"{source_name}-copy",
+            parent=self.root,
+        )
+        if target_name is None:
+            return
+        target_name = target_name.strip()
+        if not target_name:
+            messagebox.showerror(
+                "Invalid VM name", "Enter a name for the cloned VM.", parent=self.root
+            )
+            return
+        if getattr(self, "_backup_task_active", False):
+            self._status("A backup, restore, or clone operation is already running.")
+            return
+
+        self._set_backup_busy(True)
+        self._status(
+            f"Cloning {source_name}; guest disks are copied and this may take some time…"
+        )
+
+        def worker() -> None:
+            try:
+                cloned = clone_vm(self.manager, source_name, target_name)
+                error = None
+            except Exception as exc:
+                cloned = None
+                error = exc
+
+            def finish() -> None:
+                self._set_backup_busy(False)
+                if error is not None:
+                    messagebox.showerror("VM clone failed", str(error), parent=self.root)
+                    self._status("Clone failed; the source VM was not changed.")
+                    return
+                self.refresh()
+                if cloned is not None and self.table.exists(cloned.name):
+                    self.table.selection_set(cloned.name)
+                self._status(f"Cloned {source_name} as {cloned.name}.")
+                messagebox.showinfo(
+                    "VM cloned",
+                    f"Created {cloned.name} with independent guest disk images.\n\n"
+                    "External ISO/floppy media remain referenced at their original paths. "
+                    "Custom Bochs configuration, logs, and runtime state were not copied. "
+                    "A fresh generated Bochs config will be used on the next boot.",
+                    parent=self.root,
+                )
+
+            try:
+                self.root.after(0, finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="vm-studio-clone", daemon=True).start()
+
+    def import_backup(self) -> None:
+        source = filedialog.askopenfilename(
+            parent=self.root,
+            title="Import ChromeOS VM Studio backup",
+            filetypes=[("ChromeOS VM Studio backups", "*.zip"), ("ZIP archives", "*.zip"), ("All files", "*")],
+        )
+        if not source:
+            return
+        if getattr(self, "_backup_task_active", False):
+            self._status("A backup or restore operation is already running.")
+            return
+        new_name = simpledialog.askstring(
+            "Restore virtual machine",
+            "Optional new VM name (leave blank to keep the original name):",
+            parent=self.root,
+        )
+        if new_name is None:
+            return
+        selected_name = new_name.strip() or None
+        self._set_backup_busy(True)
+        self._status("Validating backup and restoring virtual disk files…")
+
+        def worker() -> None:
+            try:
+                restored = import_vm(self.manager, source, selected_name)
+                error = None
+            except Exception as exc:
+                restored = None
+                error = exc
+
+            def finish() -> None:
+                self._set_backup_busy(False)
+                if error is not None:
+                    messagebox.showerror("Backup restore failed", str(error), parent=self.root)
+                    self._status("Backup restore failed; no existing VM was overwritten.")
+                    return
+                self.refresh()
+                if restored is not None and self.table.exists(restored.name):
+                    self.table.selection_set(restored.name)
+                self._status(f"Restored {restored.name}. Check external ISO/floppy paths before booting.")
+                messagebox.showinfo(
+                    "VM restored",
+                    f"Restored {restored.name} into the private VM library.\n\n"
+                    "The managed virtual disks were restored. ISO/floppy images were not bundled, so their saved paths "
+                    "must still exist. Custom Bochs configuration, logs, and runtime state were not restored; "
+                    "the manager will generate a fresh Bochs config.",
+                    parent=self.root,
+                )
+
+            try:
+                self.root.after(0, finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="vm-studio-import", daemon=True).start()
+
     def open_folder(self) -> None:
         name = self.selected_name()
         if not name:
@@ -655,6 +1070,40 @@ class ChromeOSVMStudio:
         text.pack(fill="both", expand=True)
         text.insert("1.0", content)
         text.configure(state="disabled")
+
+    def show_diagnostics(self) -> None:
+        name = self.selected_name()
+        if not name:
+            self._status("Select a virtual machine first.")
+            return
+        try:
+            report = self.manager.diagnostic_report(name)
+        except (VMError, OSError) as exc:
+            messagebox.showerror("Could not inspect VM", str(exc), parent=self.root)
+            return
+
+        window = tk.Toplevel(self.root)
+        window.title(f"{name} — Diagnostics")
+        window.geometry("780x560")
+        frame = ttk.Frame(window, padding=14)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(
+            frame,
+            text="Non-destructive checks for the emulator, firmware, disks, media, and configuration.",
+            wraplength=740,
+        ).pack(anchor="w", pady=(0, 8))
+        body = ttk.Frame(frame)
+        body.pack(fill="both", expand=True)
+        report_text = tk.Text(body, wrap="word", height=24)
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=report_text.yview)
+        report_text.configure(yscrollcommand=scrollbar.set)
+        report_text.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        report_text.insert("1.0", report)
+        report_text.configure(state="disabled")
+        ttk.Button(frame, text="Close", command=window.destroy).pack(
+            anchor="e", pady=(8, 0)
+        )
 
     def delete_vm(self) -> None:
         name = self.selected_name()

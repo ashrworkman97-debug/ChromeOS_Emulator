@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -22,12 +23,15 @@ from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from . import __version__ as INSTALLED_VERSION
+
 OWNER = "ashrworkman97-debug"
 REPOSITORY = "ChromeOS_Emulator"
 BRANCH = "main"
 API_URL = f"https://api.github.com/repos/{OWNER}/{REPOSITORY}/commits/{BRANCH}"
 ARCHIVE_URL = f"https://codeload.github.com/{OWNER}/{REPOSITORY}/tar.gz/{{sha}}"
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 128 * 1024 * 1024
 MAX_ARCHIVE_FILES = 500
@@ -35,6 +39,10 @@ MAX_ARCHIVE_FILES = 500
 
 class UpdateError(RuntimeError):
     """An update could not be safely downloaded or installed."""
+
+
+class DowngradePrevented(UpdateError):
+    """The selected main-branch archive is older than the installed app."""
 
 
 @dataclass(frozen=True)
@@ -93,6 +101,31 @@ def latest_commit() -> str:
     if not isinstance(sha, str) or not SHA_PATTERN.fullmatch(sha):
         raise UpdateError("GitHub returned an invalid commit identifier.")
     return sha
+
+
+def _version_tuple(value: str) -> tuple[int, int, int]:
+    """Parse the stable numeric versions currently published by this project."""
+    match = VERSION_PATTERN.fullmatch(value) if isinstance(value, str) else None
+    if not match:
+        raise UpdateError(
+            "The updater requires a stable numeric project version in MAJOR.MINOR.PATCH form."
+        )
+    return tuple(int(part) for part in match.groups())
+
+
+def _source_version(source_dir: Path) -> str:
+    """Read and validate the package version before running pip."""
+    try:
+        project = tomllib.loads(
+            (source_dir / "pyproject.toml").read_text(encoding="utf-8")
+        ).get("project")
+        version = project["version"]
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError, KeyError, TypeError) as exc:
+        raise UpdateError("The update archive has no valid project.version in pyproject.toml.") from exc
+    if not isinstance(version, str):
+        raise UpdateError("The update archive has no valid project.version in pyproject.toml.")
+    _version_tuple(version)
+    return version
 
 
 def _safe_extract(archive_bytes: bytes, destination: Path) -> Path:
@@ -161,6 +194,16 @@ def apply_update(sha: str) -> None:
         source_dir = stage / "source"
         source_dir.mkdir()
         _safe_extract(archive, source_dir)
+
+        candidate_version = _source_version(source_dir)
+        installed_version = _version_tuple(INSTALLED_VERSION)
+        if _version_tuple(candidate_version) < installed_version:
+            raise DowngradePrevented(
+                f"Refusing to downgrade ChromeOS VM Studio from {INSTALLED_VERSION} "
+                f"to {candidate_version}. The repository's main branch is older than "
+                "this installed release; keep this installation until main is updated."
+            )
+
         command = [
             sys.executable, "-m", "pip", "install",
             "--no-deps", "--no-build-isolation", "--upgrade", "--force-reinstall",
@@ -204,6 +247,15 @@ def check_for_updates(*, force: bool = False, cooldown_hours: int = 12) -> Updat
         _write_metadata({"repository": f"{OWNER}/{REPOSITORY}", "branch": BRANCH,
                          "commit": sha, "last_check": now.isoformat()})
         return UpdateResult("updated", "A new version was installed. Restart ChromeOS VM Studio to use it.", sha)
+    except DowngradePrevented as exc:
+        # Keep the installed commit marker: a refused downgrade is not an install.
+        metadata.update({"repository": f"{OWNER}/{REPOSITORY}", "branch": BRANCH,
+                         "last_check": now.isoformat()})
+        try:
+            _write_metadata(metadata)
+        except OSError:
+            pass
+        return UpdateResult("current", str(exc), metadata.get("commit"))
     except (UpdateError, OSError) as exc:
         return UpdateResult("failed", str(exc), metadata.get("commit"))
 

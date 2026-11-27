@@ -8,6 +8,76 @@ This project is at an early stage. The first usable backend is [Bochs](https://b
 
 Select a VM in the library and choose **Edit VM…**. Stop the VM before changing settings. The editor can change RAM, Bochs CPU IPS, the pre-defined x86 CPU model, and the attached CD/DVD image; use **Eject ISO** to clear CD/DVD media. CPU model choices include 386SX, 486DX4, Pentium/Pentium MMX, AMD K6-2, Pentium II/III/4, Core Duo T2400, and Atom N270, plus the Bochs build default. CPU IPS remains a separate timing calibration setting. The PCI chipset can be selected independently as Intel i430FX, i440FX, or i440BX; i440FX is the default. These are Bochs-documented PCI chipset models, not host CPU settings, and availability depends on PCI support in the installed Bochs build. The model changes guest-visible CPU features; it does not accelerate Bochs on the Chromebook. The **Attach/Eject floppy A** and **Attach/Eject floppy B** controls manage two raw floppy drives separately. Bochs supports standard 160K through 2.88M image capacities; the manager checks exact sizes and attaches both images write-protected by default. BIOS floppy boot uses drive A, so the boot order tries A first when present, then CD/DVD if present, then hard disk. Drive B remains available as secondary media to guests that support it. Virtual disk resizing is not supported yet.
 
+## Optional audio
+
+In **New VM** or **Edit VM**, enable **Sound Blaster 16 / PC speaker audio** for older games and operating systems that use those devices. It is off by default. The generated Bochs config enables the SB16 ISA sound card and PC speaker, routes PCM output through Bochs' SDL sound driver, and leaves microphone input and MIDI output disabled. Actual playback depends on the installed Bochs build and Crostini's SDL/audio integration; if audio initialization fails or the guest is silent, turn this option off and inspect the Bochs log. Audio emulation can add CPU overhead on a low-power Chromebook.
+
+CLI creation supports the same option with `--sound`.
+
+## BIOS boot priority
+
+Select a VM and choose **Boot order…** to edit the BIOS sequence. The editor accepts one to three unique devices in priority order: floppy A, CD/DVD, hard disk, or network boot ROM. **Automatic** preserves the original media-aware behavior: floppy A first when attached, then CD/DVD when attached, then the primary hard disk. A manually selected floppy or CD/DVD entry requires that media to remain attached; the manager refuses to eject a selected boot device until the order is changed. Existing profiles without a `boot_order` field remain automatic.
+
+Network boot is written as Bochs' documented `network` boot choice. It requires a compatible Bochs network adapter and boot ROM; the current manager does not configure a NIC, so network boot is an advanced option rather than a turnkey PXE setup. The app validates the sequence and passes it to Bochs; the guest firmware and installed Bochs build determine whether a particular network boot ROM is available.
+
+The CLI accepts the same sequence:
+
+```sh
+chromeos-vm create dos-installer --iso /path/to/install.iso --boot-order cdrom,disk
+chromeos-vm set-boot-order dos-installer --order disk
+chromeos-vm set-boot-order dos-installer --order auto
+```
+
+The Bochs configuration editor pins the `boot:` directive to the saved VM profile, preventing a custom config from silently changing the boot priority behind the GUI.
+
+## IDE storage topology
+
+ChromeOS VM Studio now exposes a conservative two-channel IDE layout using Bochs' documented ATA devices:
+
+- **IDE channel 0 master (ata0-master):** the VM's primary private disk.raw.
+- **IDE channel 1 master (ata1-master):** an optional second private sparse disk2.raw.
+- **CD-ROM slave:** choose the primary-channel slave (ata0-slave) or secondary-channel slave (ata1-slave) in New VM or Edit VM.
+- **IDE controllers:** generated configs explicitly enable the standard primary and secondary legacy IDE ports and IRQs. This is ordinary emulated PC IDE, not SATA/AHCI.
+
+New VM can create the second disk immediately. For an existing stopped VM, choose **Attach second disk…** and enter a size from 1–512 GiB. **Detach second disk** removes it from the guest profile but deliberately keeps disk2.raw and its data in the VM folder; it can be reattached at the same size. Permanently deleting the VM remains a separate confirmed operation. The second disk is checked for a private path, regular-file type, link count, and exact geometry-derived size before Bochs opens it.
+
+CLI examples: chromeos-vm create retro-pc --disk-gib 8 --secondary-disk-gib 4 --cdrom-slot ata1-slave; chromeos-vm attach-disk retro-pc --disk-gib 4; chromeos-vm detach-disk retro-pc.
+
+Detaching never erases the secondary disk. The CD-ROM slot can be changed in **Edit VM…** while the VM is stopped and no custom bochsrc override is active.
+
+## Backup and restore
+
+Use **Export backup…** in the native VM manager, or run:
+
+```sh
+chromeos-vm export win98 /path/to/win98.cvms.zip
+```
+
+Export requires Bochs to be stopped so the guest disks are not copied while they are changing. The ZIP contains the VM profile, primary raw disk, and disk2.raw when it exists. A detached secondary disk is included too, preserving data that was intentionally detached from the guest.
+
+Restore through **Import backup…** or:
+
+```sh
+chromeos-vm import /path/to/win98.cvms.zip
+chromeos-vm import /path/to/win98.cvms.zip --name win98-copy
+```
+
+Restore always creates a new VM folder and refuses to overwrite an existing VM. It atomically claims the final folder name rather than renaming over a possibly-created empty directory, moves the restored disks into that folder, and publishes `vm.json` last so an incomplete restore is not listed as a VM. If another process creates the destination name during restore, that directory is left untouched and the import aborts. It rewrites managed disk paths for the new private folder. The archive is checked for unexpected paths, duplicate entries, links, unsupported compression, oversized metadata, inconsistent disk geometry, and unsafe expansion before any disk is installed. During restore, all-zero 4 KiB blocks are recreated as sparse holes where the destination filesystem supports sparse files, preserving the virtual disk's full logical size without needlessly allocating its zero-filled regions.
+
+Backups do **not** bundle guest OS installation media, attached ISO/floppy files, custom bochsrc.custom, logs, or runtime PID state. Saved ISO/floppy paths remain external and must still exist on the Chromebook after restore. A fresh generated Bochs configuration is created at the next boot. Keep a separate copy of any custom Bochs configuration you need. Backups can be large and may take time on a Chromebook; export and restore run off the GUI thread. Store backups somewhere with enough free space, and keep more than one copy of important guest data.
+
+App-managed **Boot**, **Stop**, **Delete**, and **Export backup** operations use a non-blocking per-VM advisory lock under `~/.local/share/chromeos-vm-studio/.locks/`. This coordinates separate GUI and CLI processes: a conflicting action reports that the VM is busy instead of starting Bochs during an export or deleting files being copied. The lock folder is kept outside individual VM folders so deleting a VM cannot unlink a lock that another process is waiting on. The default Crostini home filesystem supports Linux `flock`; custom VM storage locations must also support advisory file locking. Launching Bochs manually outside ChromeOS VM Studio bypasses this coordination, so do not manually start a guest while exporting its disks.
+
+## Clone a VM
+
+Select a stopped VM and choose **Clone VM…**, or run:
+
+```sh
+chromeos-vm clone win98 win98-copy
+```
+
+Cloning creates independent primary and secondary guest disks, including a detached `disk2.raw`, and gives the copy new private disk paths. It uses the same validated backup/restore pipeline as ZIP backups, with a temporary archive under the private VM storage root; large populated disks can therefore require temporary free space and take time to copy. The source must be stopped, and an existing destination VM is never overwritten. External ISO/floppy images remain references to their original paths (they are not duplicated). Custom Bochs configuration, logs, and runtime process state are not copied; a fresh generated Bochs config is used on the next boot.
+
 ## Advanced Bochs configuration
 
 Select a stopped VM and choose **Bochs config…** to edit the complete bochsrc text in the native manager. **Validate** runs conservative static checks for required directives, memory/IPS ranges, disk layout, and common formatting mistakes. **Save custom config** stores a separate bochsrc.custom file which is used by the next boot; the generated bochsrc remains available as a reset point.
@@ -46,6 +116,8 @@ chmod +x scripts/install-crostini.sh
 ./scripts/install-crostini.sh
 ```
 
+**Downloaded the ZIP instead of cloning?** Extract it first, then change into the extracted `ChromeOS_Emulator-main` folder before running the installer. Do not run the `git clone` or `git pull` commands for a ZIP copy.
+
 The installer uses Debian packages for Bochs, its SDL display plugin, the Bochs system BIOS, the separate VGA BIOS package, Tkinter, and Python packaging tools. On Debian 13 (Trixie), `bochsbios` installs `/usr/share/bochs/BIOS-bochs-latest`, while `vgabios` installs the standard VGA ROM at `/usr/share/vgabios/vgabios.bin`. It does **not** install Bochs' upstream default `/usr/share/bochs/VGABIOS-lgpl-latest.bin` path. The app resolves the files from Debian's package manifest and explicitly supplies both ROM paths to Bochs. It creates a Python virtual environment under `~/.local/opt/chromeos-vm-studio` and registers a desktop launcher. After installation, launch **ChromeOS VM Studio** from the ChromeOS Launcher (under Linux apps). The manager has a dark navy title banner, a cleaner VM library with colored running/stopped indicators, and a dedicated action panel. Guest desktops still launch in separate Bochs windows.
 
 If you already have the dependencies, run the app from the project directory with:
@@ -56,7 +128,7 @@ PYTHONPATH=src python3 -m chromeos_vm.gui
 
 ## Automatic updates
 
-The app checks the repository's latest `main` commit in the background shortly after launch. Automatic checks are throttled to once every 12 hours. If a newer commit exists, the updater downloads the GitHub source archive, validates and safely extracts it, and reinstalls the Python application into the existing private virtual environment. It then asks you to restart the manager to load the new code. Guest profiles and virtual disks remain in `~/.local/share/chromeos-vm-studio`; the updater does not delete or rewrite them.
+The app checks the repository's latest `main` commit in the background shortly after launch. Automatic checks are throttled to once every 12 hours. If a newer commit exists, the updater downloads the GitHub source archive, validates and safely extracts it, and reinstalls the Python application into the existing private virtual environment. It then asks you to restart the manager to load the new code. Guest profiles and virtual disks remain in `~/.local/share/chromeos-vm-studio`; the updater does not delete or rewrite them. Before pip runs, the updater reads the downloaded package version and refuses to install a lower version than the one already running; a newer branch build is kept intact while `main` catches up.
 
 Use the **Updates** button in the manager to check immediately, or run:
 
@@ -84,9 +156,11 @@ CLI equivalents are also available:
 
 ```sh
 chromeos-vm check
-chromeos-vm create win98 --memory-mib 512 --disk-gib 8 --cpu-model pentium --chipset i440fx --iso /path/to/install.iso
+chromeos-vm create win98 --memory-mib 512 --disk-gib 8 --cpu-model pentium --chipset i440fx --iso /path/to/install.iso --boot-order cdrom,disk
+chromeos-vm set-boot-order win98 --order disk
 chromeos-vm start win98
 chromeos-vm info win98
+chromeos-vm diagnose win98
 chromeos-vm stop win98
 chromeos-vm list
 chromeos-vm delete win98
@@ -101,21 +175,21 @@ VMs live in `~/.local/share/chromeos-vm-studio` by default. Set `CHROMEOS_VM_HOM
 - The app itself works inside the Crostini Linux environment; it does not have direct privileged access to ChromeOS's host virtualization services.
 - Nested virtualization/KVM is not assumed and is not needed by the Bochs backend.
 - The app does not bundle operating-system installation media or proprietary firmware/ROM dumps. Use media and firmware that you are legally entitled to use. The installer installs Debian's `bochsbios` and `vgabios` packages. On Debian 13, the VGA ROM is `/usr/share/vgabios/vgabios.bin`; do not create a symlink to the non-existent `/usr/share/bochs/VGABIOS-lgpl-latest.bin`. The app writes the discovered ROM paths directly into its generated Bochs config.
-- The graphical VM manager currently launches Bochs in its own window rather than embedding the guest display.
+- The graphical VM manager currently launches Bochs in its own window rather than embedding the guest display. The **Diagnostics…** action and `chromeos-vm diagnose <name>` command report Bochs/BIOS availability, process state, active-config static validation, managed disk integrity and sparse allocation, attached-media availability, and log-file presence. These checks help locate setup problems; they do not prove that a newly changed guest configuration can boot. The project owner has already confirmed successful guest OS boots on a physical Chromebook through Crostini; CI still validates configuration and device initialization rather than installing a full guest OS. They do not alter VM profiles or disks; process inspection may reconcile a stale runtime PID marker. Diagnostics also explain the safe shutdown boundary: use the guest OS's own shutdown command first because the manager's Stop action signals the Bochs process rather than issuing an in-guest ACPI power-off request.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 
 ## Roadmap
 
 1. Native Crostini desktop manager, VM library, sparse raw disks, Bochs GUI launch/stop, logs, ISO selection/ejection, editable RAM/CPU settings, and confirmed deletion. (Implemented; CI GUI smoke-tested.)
-2. Extend hardware configuration (machine family, display, IDE/ATA device choices, and removable-media behavior). (Pre-defined CPU model and PCI chipset selection are implemented and tested against Debian 13 Bochs; CD/DVD and read-only floppy A/B attachment/ejection are implemented; broader IDE topology and device selection remain.)
-3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, and static validation. (Implemented and tested.) Remaining: guest shutdown guidance and richer status diagnostics.
+2. Extend hardware configuration (machine family, display, IDE/ATA device choices, removable-media behavior, and optional audio). (Pre-defined CPU model and PCI chipset selection, read-only floppy A/B media, two-channel IDE storage, selectable CD-ROM placement, BIOS boot priority, and optional SB16/PC-speaker audio are implemented; broader device selection remains.)
+3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, static validation, and non-destructive VM diagnostics in the GUI/CLI. (Implemented and tested.) Diagnostics report disk/media/firmware/config health and explain guest shutdown behavior.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
-5. Storage import/export, clone, backup, and disk resizing with safeguards.
+5. ZIP backup/export, safe restore, and same-host cloning of managed raw disks, including detached secondary-disk data. (Implemented; disk resizing remains future work.)
 6. Evaluate an optional accelerated non-QEMU KVM backend only for compatible guests on hosts that actually expose nested KVM.
-7. Reproducible end-to-end guest boot tests on representative Chromebook hardware and packaging polish.
+7. Expand guest-specific regression coverage on representative Chromebook hardware and packaging polish. (The project owner has already verified guest OS boot on a physical Chromebook through Crostini; repeatable automated per-guest tests remain future work.)
 
-A milestone is not complete just because a command or UI control exists: tests and actual guest boot verification are required before support is claimed.
+A milestone is not complete just because a command or UI control exists: test the underlying data and device behavior, and report the exact guest/hardware combinations actually verified.
 
 ## Tests
 
@@ -123,7 +197,7 @@ A milestone is not complete just because a command or UI control exists: tests a
 python3 -m unittest discover -s tests -v
 ```
 
-CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display, verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated hard-disk configuration, attached floppy A/B images, every CPU model, and all three PCI chipsets exposed by the app. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
+CI runs the suite on Python 3.11, 3.12, and 3.13, exercises the native Tk GUI under a virtual display (including the BIOS boot-order editor), verifies Debian 13 ROM package paths, and runs real Bochs parser/initialization benchmarks for the generated primary disk, optional secondary IDE disk and CD-ROM position, attached floppy A/B images, explicit BIOS boot sequences, every CPU model, and all three PCI chipsets exposed by the app. Updater tests also exercise archive path, link, entry-count, and expanded-size defenses. VM backup tests exercise round-trip disk restoration, detached secondary-disk preservation, external-media path retention, duplicate/path-traversal/symlink rejection, disk-size checks, no-overwrite behavior, and cross-process lifecycle locking during export. These checks use empty test media; they are not guest OS installation/boot tests. The management layer uses only the Python standard library; Tkinter is supplied by the OS package.
 
 ## License
 
