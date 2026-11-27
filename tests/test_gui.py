@@ -117,5 +117,43 @@ class IDEStorageUITests(unittest.TestCase):
             self.app.detach_secondary_disk()
         self.app.manager.detach_secondary_disk.assert_not_called()
 
+class CloneUITests(unittest.TestCase):
+    def test_clone_prompts_for_name_and_runs_copy_off_the_tk_thread(self):
+        from types import SimpleNamespace
+
+        app = ChromeOSVMStudio.__new__(ChromeOSVMStudio)
+        app.root = Mock()
+        app.manager = Mock()
+        app.status = Mock()
+        app.selected_name = Mock(return_value="source-vm")
+        app.refresh = Mock()
+        app.table = Mock()
+        app._set_backup_busy = Mock()
+        cloned = SimpleNamespace(name="source-copy")
+
+        with patch("chromeos_vm.gui.simpledialog.askstring", return_value="source-copy") as ask:
+            with patch("chromeos_vm.gui.clone_vm", return_value=cloned) as clone:
+                with patch("chromeos_vm.gui.threading.Thread") as thread_factory:
+                    with patch("chromeos_vm.gui.messagebox.showinfo"):
+                        app.clone_selected_vm()
+                        ask.assert_called_once()
+                        thread_factory.assert_called_once()
+                        self.assertTrue(thread_factory.call_args.kwargs["daemon"])
+                        self.assertEqual(
+                            thread_factory.call_args.kwargs["name"], "vm-studio-clone"
+                        )
+                        worker = thread_factory.call_args.kwargs["target"]
+                        worker()
+                        clone.assert_called_once_with(app.manager, "source-vm", "source-copy")
+                        app.root.after.assert_called_once()
+                        finish = app.root.after.call_args.args[1]
+                        finish()
+
+        app._set_backup_busy.assert_any_call(True)
+        app._set_backup_busy.assert_any_call(False)
+        app.refresh.assert_called_once()
+        app.table.selection_set.assert_called_once_with("source-copy")
+
+
 if __name__ == "__main__":
     unittest.main()

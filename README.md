@@ -68,6 +68,16 @@ Backups do **not** bundle guest OS installation media, attached ISO/floppy files
 
 App-managed **Boot**, **Stop**, **Delete**, and **Export backup** operations use a non-blocking per-VM advisory lock under `~/.local/share/chromeos-vm-studio/.locks/`. This coordinates separate GUI and CLI processes: a conflicting action reports that the VM is busy instead of starting Bochs during an export or deleting files being copied. The lock folder is kept outside individual VM folders so deleting a VM cannot unlink a lock that another process is waiting on. The default Crostini home filesystem supports Linux `flock`; custom VM storage locations must also support advisory file locking. Launching Bochs manually outside ChromeOS VM Studio bypasses this coordination, so do not manually start a guest while exporting its disks.
 
+## Clone a VM
+
+Select a stopped VM and choose **Clone VM…**, or run:
+
+```sh
+chromeos-vm clone win98 win98-copy
+```
+
+Cloning creates independent primary and secondary guest disks, including a detached `disk2.raw`, and gives the copy new private disk paths. It uses the same validated backup/restore pipeline as ZIP backups, with a temporary archive under the private VM storage root; large populated disks can therefore require temporary free space and take time to copy. The source must be stopped, and an existing destination VM is never overwritten. External ISO/floppy images remain references to their original paths (they are not duplicated). Custom Bochs configuration, logs, and runtime process state are not copied; a fresh generated Bochs config is used on the next boot.
+
 ## Advanced Bochs configuration
 
 Select a stopped VM and choose **Bochs config…** to edit the complete bochsrc text in the native manager. **Validate** runs conservative static checks for required directives, memory/IPS ranges, disk layout, and common formatting mistakes. **Save custom config** stores a separate bochsrc.custom file which is used by the next boot; the generated bochsrc remains available as a reset point.
@@ -165,7 +175,7 @@ VMs live in `~/.local/share/chromeos-vm-studio` by default. Set `CHROMEOS_VM_HOM
 - The app itself works inside the Crostini Linux environment; it does not have direct privileged access to ChromeOS's host virtualization services.
 - Nested virtualization/KVM is not assumed and is not needed by the Bochs backend.
 - The app does not bundle operating-system installation media or proprietary firmware/ROM dumps. Use media and firmware that you are legally entitled to use. The installer installs Debian's `bochsbios` and `vgabios` packages. On Debian 13, the VGA ROM is `/usr/share/vgabios/vgabios.bin`; do not create a symlink to the non-existent `/usr/share/bochs/VGABIOS-lgpl-latest.bin`. The app writes the discovered ROM paths directly into its generated Bochs config.
-- The graphical VM manager currently launches Bochs in its own window rather than embedding the guest display. The **Diagnostics…** action and `chromeos-vm diagnose <name>` command report Bochs/BIOS availability, process state, active-config static validation, managed disk integrity and sparse allocation, attached-media availability, and log-file presence. These checks help locate setup problems; they do not prove that a guest operating system can boot. They do not alter VM profiles or disks; process inspection may reconcile a stale runtime PID marker. Diagnostics also explain the safe shutdown boundary: use the guest OS's own shutdown command first because the manager's Stop action signals the Bochs process rather than issuing an in-guest ACPI power-off request.
+- The graphical VM manager currently launches Bochs in its own window rather than embedding the guest display. The **Diagnostics…** action and `chromeos-vm diagnose <name>` command report Bochs/BIOS availability, process state, active-config static validation, managed disk integrity and sparse allocation, attached-media availability, and log-file presence. These checks help locate setup problems; they do not prove that a newly changed guest configuration can boot. The project owner has already confirmed successful guest OS boots on a physical Chromebook through Crostini; CI still validates configuration and device initialization rather than installing a full guest OS. They do not alter VM profiles or disks; process inspection may reconcile a stale runtime PID marker. Diagnostics also explain the safe shutdown boundary: use the guest OS's own shutdown command first because the manager's Stop action signals the Bochs process rather than issuing an in-guest ACPI power-off request.
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 
@@ -175,11 +185,11 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md) 
 2. Extend hardware configuration (machine family, display, IDE/ATA device choices, removable-media behavior, and optional audio). (Pre-defined CPU model and PCI chipset selection, read-only floppy A/B media, two-channel IDE storage, selectable CD-ROM placement, BIOS boot priority, and optional SB16/PC-speaker audio are implemented; broader device selection remains.)
 3. Verified Bochs process identity, safe legacy PID migration, pidfd-aware stop signaling, stale-marker cleanup, editable custom bochsrc files, static validation, and non-destructive VM diagnostics in the GUI/CLI. (Implemented and tested.) Diagnostics report disk/media/firmware/config health and explain guest shutdown behavior.
 4. Save-state/snapshot support only if Bochs exposes a reliable supported interface; no snapshot claim yet.
-5. ZIP backup/export and safe restore of managed raw disks, including detached secondary-disk data. (Implemented; clone and disk resizing remain future work.)
+5. ZIP backup/export, safe restore, and same-host cloning of managed raw disks, including detached secondary-disk data. (Implemented; disk resizing remains future work.)
 6. Evaluate an optional accelerated non-QEMU KVM backend only for compatible guests on hosts that actually expose nested KVM.
-7. Reproducible end-to-end guest boot tests on representative Chromebook hardware and packaging polish.
+7. Expand guest-specific regression coverage on representative Chromebook hardware and packaging polish. (The project owner has already verified guest OS boot on a physical Chromebook through Crostini; repeatable automated per-guest tests remain future work.)
 
-A milestone is not complete just because a command or UI control exists: tests and actual guest boot verification are required before support is claimed.
+A milestone is not complete just because a command or UI control exists: test the underlying data and device behavior, and report the exact guest/hardware combinations actually verified.
 
 ## Tests
 

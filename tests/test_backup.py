@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from chromeos_vm.backup import export_vm, import_vm
+from chromeos_vm.backup import clone_vm, export_vm, import_vm
 from chromeos_vm.manager import VMError, VMManager
 
 
@@ -88,6 +88,65 @@ class BackupTests(unittest.TestCase):
             self.assertEqual(set(archive.namelist()), {
                 "manifest.json", "vm.json", "disk.raw", "disk2.raw"
             })
+
+    def test_clone_creates_independent_disks_and_excludes_runtime_files(self):
+        cfg, iso = self._make_vm()
+        self.manager.custom_bochsrc_path(cfg.name).write_text(
+            "# source-only custom config\n", encoding="utf-8"
+        )
+        (self.manager.vm_path(cfg.name) / "logs/bochs.log").write_text(
+            "source-only log\n", encoding="utf-8"
+        )
+        source_primary = Path(cfg.disk_path)
+        source_secondary = Path(cfg.secondary_disk_path)
+        primary_before = source_primary.read_bytes()[:18]
+        secondary_before = source_secondary.read_bytes()[:20]
+
+        cloned = clone_vm(self.manager, cfg.name, "cloned-vm")
+        clone_dir = self.manager.vm_path(cloned.name)
+        clone_primary = Path(cloned.disk_path)
+        clone_secondary = Path(cloned.secondary_disk_path)
+
+        self.assertEqual(cloned.name, "cloned-vm")
+        self.assertNotEqual(clone_primary, source_primary)
+        self.assertNotEqual(clone_secondary, source_secondary)
+        self.assertEqual(clone_primary.read_bytes()[:18], b"primary guest data")
+        self.assertEqual(clone_secondary.read_bytes()[:20], b"secondary guest data")
+        self.assertEqual(clone_primary.stat().st_size, SMALL_GEOMETRY[3])
+        self.assertLess(clone_primary.stat().st_blocks * 512, clone_primary.stat().st_size)
+        self.assertEqual(clone_secondary.stat().st_size, SMALL_GEOMETRY[3])
+        self.assertEqual(cloned.iso_path, str(iso.resolve()))
+        self.assertFalse(self.manager.custom_bochsrc_path(cloned.name).exists())
+        self.assertFalse((clone_dir / "logs/bochs.log").exists())
+        self.assertEqual(source_primary.read_bytes()[:18], primary_before)
+        self.assertEqual(source_secondary.read_bytes()[:20], secondary_before)
+        self.assertEqual(list(self.source_home.glob(".clone-*")), [])
+
+    def test_clone_preserves_a_detached_secondary_disk(self):
+        cfg, _iso = self._make_vm()
+        detached = self.manager.detach_secondary_disk(cfg.name)
+        cloned = clone_vm(self.manager, cfg.name, "detached-copy")
+        clone_disk = self.manager.vm_path(cloned.name) / "disk2.raw"
+
+        self.assertIsNone(cloned.secondary_disk_path)
+        self.assertIsNone(cloned.secondary_disk_gib)
+        self.assertTrue(clone_disk.is_file())
+        self.assertEqual(clone_disk.stat().st_size, SMALL_GEOMETRY[3])
+        self.assertEqual(clone_disk.read_bytes()[:20], b"secondary guest data")
+        self.assertEqual(detached.read_bytes()[:20], b"secondary guest data")
+        self.assertEqual(list(self.source_home.glob(".clone-*")), [])
+
+    def test_clone_refuses_running_source_and_existing_destination(self):
+        cfg, _iso = self._make_vm()
+        self.manager.create("already-here")
+        with self.assertRaisesRegex(VMError, "already exists"):
+            clone_vm(self.manager, cfg.name, "already-here")
+
+        with patch.object(self.manager, "is_running", return_value=True):
+            with self.assertRaisesRegex(VMError, "Shut down the guest"):
+                clone_vm(self.manager, cfg.name, "running-copy")
+        self.assertFalse(self.manager.vm_path("running-copy").exists())
+        self.assertEqual(list(self.source_home.glob(".clone-*")), [])
 
     def test_export_refuses_running_vm_and_existing_destination(self):
         cfg, _iso = self._make_vm()

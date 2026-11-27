@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 from . import __version__
-from .backup import export_vm, import_vm
+from .backup import clone_vm, export_vm, import_vm
 from .manager import (
     CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS, VMError, VMManager,
 )
@@ -66,6 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
     restore = cmds.add_parser("import", help="restore a VM from a ChromeOS VM Studio ZIP backup")
     restore.add_argument("source", type=Path)
     restore.add_argument("--name", help="optional new VM name; the original name is used by default")
+    clone = cmds.add_parser("clone", help="clone a stopped VM into an independent VM")
+    clone.add_argument("source", help="name of the existing source VM")
+    clone.add_argument("name", help="new name for the cloned VM")
     cmds.add_parser("list", help="list virtual machines")
     delete = cmds.add_parser("delete", help="delete a stopped VM and its disk")
     delete.add_argument("name")
@@ -126,6 +129,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{cfg.name}: {status}, {cfg.memory_mib} MiB RAM, {disk_summary}")
         elif args.command == "diagnose":
             print(manager.diagnostic_report(args.name))
+        elif args.command == "clone":
+            cfg = clone_vm(manager, args.source, args.name)
+            print(
+                f"Cloned {args.source} as {cfg.name}. Primary and managed secondary disks are independent; "
+                "external ISO/floppy media remain shared at their saved paths. "
+                "Custom Bochs config, logs, and runtime state were not copied."
+            )
         elif args.command == "export":
             backup = export_vm(manager, args.name, args.destination)
             print(

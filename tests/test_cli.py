@@ -117,6 +117,26 @@ class IDEStorageCLITests(unittest.TestCase):
         self.assertIn("Guest shutdown guidance:", report)
 
 
+    def test_clone_command_creates_an_independent_vm(self):
+        from unittest.mock import patch
+
+        geometry = (1, 1, 2048, 1024 * 1024)
+        with patch("chromeos_vm.manager.disk_geometry", return_value=geometry):
+            with patch("chromeos_vm.backup.disk_geometry", return_value=geometry):
+                result, _output = self.run_cli("create", "clone-source", "--disk-gib", "1")
+                self.assertEqual(result, 0)
+                source = VMManager(self.home).load("clone-source")
+                with Path(source.disk_path).open("r+b") as stream:
+                    stream.write(b"clone CLI data")
+
+                result, output = self.run_cli("clone", "clone-source", "clone-copy")
+                self.assertEqual(result, 0)
+                self.assertIn("Cloned clone-source as clone-copy", output)
+                self.assertIn("external ISO/floppy media remain shared", output)
+                clone = VMManager(self.home).load("clone-copy")
+                self.assertNotEqual(clone.disk_path, source.disk_path)
+                self.assertEqual(Path(clone.disk_path).read_bytes()[:14], b"clone CLI data")
+
     def test_export_and_import_commands_are_wired(self):
         from types import SimpleNamespace
         from unittest.mock import patch

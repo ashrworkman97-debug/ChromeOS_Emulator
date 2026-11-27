@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from pathlib import Path
 
-from .backup import export_vm, import_vm
+from .backup import clone_vm, export_vm, import_vm
 from .manager import (
     BOOT_DEVICE_LABELS, CHIPSET_LABELS, CPU_MODEL_LABELS, IDE_CDROM_SLOT_LABELS,
     VMError, VMManager, default_boot_order,
@@ -184,6 +184,8 @@ class ChromeOSVMStudio:
         self.config_button.pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Export backup…", style="Action.TButton",
                    command=self.export_backup).pack(fill="x", pady=3)
+        ttk.Button(action_panel, text="Clone VM…", style="Action.TButton",
+                   command=self.clone_selected_vm).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="Open folder", style="Action.TButton",
                    command=self.open_folder).pack(fill="x", pady=3)
         ttk.Button(action_panel, text="View logs", style="Action.TButton",
@@ -917,6 +919,69 @@ class ChromeOSVMStudio:
                 pass
 
         threading.Thread(target=worker, name="vm-studio-export", daemon=True).start()
+
+    def clone_selected_vm(self) -> None:
+        """Clone the selected stopped VM without blocking Tk during disk copying."""
+        source_name = self.selected_name()
+        if not source_name:
+            self._status("Select a virtual machine first.")
+            return
+        target_name = simpledialog.askstring(
+            "Clone virtual machine",
+            f"New name for the copy of {source_name}:",
+            initialvalue=f"{source_name}-copy",
+            parent=self.root,
+        )
+        if target_name is None:
+            return
+        target_name = target_name.strip()
+        if not target_name:
+            messagebox.showerror(
+                "Invalid VM name", "Enter a name for the cloned VM.", parent=self.root
+            )
+            return
+        if getattr(self, "_backup_task_active", False):
+            self._status("A backup, restore, or clone operation is already running.")
+            return
+
+        self._set_backup_busy(True)
+        self._status(
+            f"Cloning {source_name}; guest disks are copied and this may take some time…"
+        )
+
+        def worker() -> None:
+            try:
+                cloned = clone_vm(self.manager, source_name, target_name)
+                error = None
+            except Exception as exc:
+                cloned = None
+                error = exc
+
+            def finish() -> None:
+                self._set_backup_busy(False)
+                if error is not None:
+                    messagebox.showerror("VM clone failed", str(error), parent=self.root)
+                    self._status("Clone failed; the source VM was not changed.")
+                    return
+                self.refresh()
+                if cloned is not None and self.table.exists(cloned.name):
+                    self.table.selection_set(cloned.name)
+                self._status(f"Cloned {source_name} as {cloned.name}.")
+                messagebox.showinfo(
+                    "VM cloned",
+                    f"Created {cloned.name} with independent guest disk images.\n\n"
+                    "External ISO/floppy media remain referenced at their original paths. "
+                    "Custom Bochs configuration, logs, and runtime state were not copied. "
+                    "A fresh generated Bochs config will be used on the next boot.",
+                    parent=self.root,
+                )
+
+            try:
+                self.root.after(0, finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="vm-studio-clone", daemon=True).start()
 
     def import_backup(self) -> None:
         source = filedialog.askopenfilename(

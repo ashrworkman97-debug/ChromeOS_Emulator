@@ -168,11 +168,11 @@ class UpdateFlowTests(unittest.TestCase):
             ("project/src/", None),
             ("project/src/chromeos_vm/", None),
         ])
-        with patch.object(updater, "INSTALLED_VERSION", "0.3.9"), \
+        with patch.object(updater, "INSTALLED_VERSION", "0.3.10"), \
              patch.object(updater, "_request", return_value=payload), \
              patch.object(updater.subprocess, "run") as install:
             with self.assertRaisesRegex(
-                updater.DowngradePrevented, "from 0.3.9 to 0.3.7"
+                updater.DowngradePrevented, "from 0.3.10 to 0.3.7"
             ):
                 updater.apply_update(sha)
         install.assert_not_called()
@@ -202,10 +202,10 @@ class UpdateFlowTests(unittest.TestCase):
         payload = make_archive([
             ("project/", None),
             ("project/pyproject.toml",
-             "[project]\nname='chromeos-vm-studio'\nversion='0.3.9'\n"),
+             "[project]\nname='chromeos-vm-studio'\nversion='0.3.10'\n"),
             ("project/src/", None),
             ("project/src/chromeos_vm/", None),
-            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.9'\n"),
+            ("project/src/chromeos_vm/__init__.py", "__version__='0.3.10'\n"),
         ])
         with tempfile.TemporaryDirectory() as temp:
             vm_dir = Path(temp) / "vms" / "dos-test"

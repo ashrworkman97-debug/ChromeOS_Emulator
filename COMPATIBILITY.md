@@ -3,6 +3,7 @@
 | Layer | Current position |
 |---|---|
 | Host OS | ChromeOS with Linux development environment (Crostini) enabled |
+| Physical Chromebook guest boot | Project owner has previously confirmed successful guest OS boots through Crostini; automated CI remains configuration/device-initialization coverage, not a full guest-install matrix |
 | App UI | Native Linux GUI app (Tkinter); no browser UI |
 | Emulator | Bochs full-PC x86 software emulation |
 | QEMU | Not used |
@@ -21,6 +22,7 @@
 | Bochs configuration | Native text editor, VM-aware static checks, custom override/reset |
 | Managed disk safety | Pre-boot private-path, regular-file, link-count, and exact-size checks |
 | Backup/restore | Stopped-VM ZIP export and safe no-overwrite restore; atomic destination-directory claim prevents replacement of a concurrently-created empty folder; `vm.json` is published last; sparse holes recreated where supported; external ISO/floppy media and custom config excluded |
+| Clone | Stopped-VM copy through the validated backup/restore pipeline; independent managed disks (including detached disk2.raw); external media paths retained; custom config/logs/runtime excluded |
 | Lifecycle coordination | Non-blocking per-VM Linux `flock` serializes app-managed Boot, Stop, Delete, and Export across GUI/CLI processes; custom storage must support advisory locks |
 
 ## Crostini

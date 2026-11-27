@@ -366,3 +366,26 @@ def import_vm(manager: VMManager, source: Path | str, name: str | None = None) -
         shutil.rmtree(target_dir, ignore_errors=True)
         raise
     return restored
+
+def clone_vm(manager: VMManager, source_name: str, target_name: str) -> VMConfig:
+    """Create an independent stopped-VM copy through the validated backup path.
+
+    The temporary ZIP lives under the private VM storage root and is always
+    removed. External media paths remain shared references; custom Bochs
+    configuration, logs, and runtime process state are intentionally omitted.
+    """
+    validate_name(target_name)
+    if source_name == target_name:
+        raise VMError("Choose a different name for the cloned VM.")
+    target_dir = manager.vm_path(target_name)
+    if target_dir.exists() or target_dir.is_symlink():
+        raise VMError(
+            f"VM '{target_name}' already exists; cloning never overwrites an existing VM."
+        )
+    # Fail early for a missing or malformed source before allocating temporary space.
+    manager.load(source_name)
+    with tempfile.TemporaryDirectory(prefix=".clone-", dir=manager.home) as temporary:
+        archive_path = Path(temporary) / f"{source_name}.cvms.zip"
+        export_vm(manager, source_name, archive_path)
+        return import_vm(manager, archive_path, target_name)
+
